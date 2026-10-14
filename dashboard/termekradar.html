@@ -236,6 +236,41 @@ tr.clickable:hover td { background: var(--sunken); }
 .feedgrid .err { color: var(--bad); }
 .run-err { color: var(--bad); font-size: 12.5px; white-space: normal; max-width: 520px; }
 
+/* shop products list */
+.prow-head, .prow { display: grid; grid-template-columns: 34px 48px minmax(0, 1fr) 112px 96px 96px 84px; gap: 12px; align-items: center; padding: 0 14px; }
+.prow-head { font-size: 12px; color: var(--muted); font-stretch: 85%; font-weight: 600; border-bottom: 1px solid var(--line); background: var(--sunken); }
+.prow-head button { border: 0; background: none; padding: 9px 0; text-align: left; color: inherit; font-weight: inherit; font-stretch: inherit; display: inline-flex; gap: 4px; }
+.prow-head button[aria-sort] { color: var(--ink); }
+.prow-head .r, .prow .r { text-align: right; justify-content: flex-end; }
+.prow { min-height: 68px; padding-top: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line); cursor: pointer; position: relative; }
+.prow:hover { background: var(--sunken); }
+.prow[aria-current="true"] { background: var(--cobalt-soft); }
+.prow[aria-current="true"]::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--cobalt); }
+.thumb { width: 48px; height: 48px; border-radius: 8px; background: var(--sunken); border: 1px solid var(--line); overflow: hidden; display: grid; place-items: center; color: var(--faint); font-size: 18px; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.d-img { width: 100%; max-height: 240px; aspect-ratio: 1 / 1; object-fit: contain; background: var(--sunken); border-radius: 10px; border: 1px solid var(--line); }
+.rev-main { font-weight: 800; font-size: 15px; font-stretch: 108%; }
+.rev-main.win { color: var(--grow); }
+.catsel { border: 1px solid var(--line-strong); border-radius: 8px; padding: 6px 8px; background: var(--surface); max-width: 220px; min-width: 0; }
+.pending { font-size: 12px; color: var(--faint); }
+.tag.cat { background: var(--sunken); color: var(--ink); border: 1px solid var(--line); font-weight: 500; }
+.tag.cat em { font-style: normal; color: var(--grow); font-weight: 700; margin-left: 4px; font-size: 12px; }
+.card.wide { grid-column: 1 / -1; }
+.range { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+.range .field input[type="number"] { max-width: 120px; }
+@media (max-width: 760px) {
+  .prow-head { display: none; }
+  .prow { grid-template-columns: 30px 48px minmax(0, 1fr) auto; grid-template-areas: "star img prod prod" "star img rev price" "star img sold total"; row-gap: 4px; padding-top: 12px; padding-bottom: 12px; }
+  .prow > .c-star { grid-area: star; align-self: start; }
+  .prow > .thumb { grid-area: img; align-self: start; }
+  .prow > .c-prod { grid-area: prod; }
+  .prow > .c-rev { grid-area: rev; text-align: left; }
+  .prow > .c-spd { grid-area: sold; text-align: left; }
+  .prow > .c-total { grid-area: total; }
+  .prow > .c-price { grid-area: price; }
+  .catsel { max-width: none; flex: 1 1 140px; }
+}
+
 [hidden] { display: none !important; }
 @media (prefers-reduced-motion: reduce) { .dot.run { animation: none; } }
 </style>
@@ -251,7 +286,8 @@ tr.clickable:hover td { background: var(--sunken); }
       <button class="btn" id="refresh" type="button">Frissítés</button>
     </div>
     <nav class="nav" role="tablist" aria-label="Nézetek">
-      <button role="tab" id="tab-radar" aria-selected="true" type="button">Radar</button>
+      <button role="tab" id="tab-shop" aria-selected="true" type="button">Termékek</button>
+      <button role="tab" id="tab-radar" aria-selected="false" type="button">Videók</button>
       <button role="tab" id="tab-settings" aria-selected="false" type="button">Beállítások</button>
       <button role="tab" id="tab-runs" aria-selected="false" type="button">Futások</button>
     </nav>
@@ -261,7 +297,48 @@ tr.clickable:hover td { background: var(--sunken); }
 <main>
   <div id="banner" hidden></div>
 
-  <section id="view-radar">
+  <section id="view-shop">
+    <div class="summary" id="shop-summary">
+      <div class="sum"><b>–</b><span>termék az ársávban</span></div>
+    </div>
+    <div class="radar">
+      <div class="panel listpanel">
+        <div class="filters">
+          <div class="seg" id="shop-seg" role="group" aria-label="Termékek szűrése"></div>
+          <div class="grow">
+            <input class="search" id="shop-search" type="search" placeholder="Keresés termékre, boltra" aria-label="Keresés a termékek között">
+            <select class="catsel" id="shop-cat" aria-label="Kategória"><option value="">Minden kategória</option></select>
+            <select class="sortsel" id="shop-sort" aria-label="Rendezés">
+              <option value="revenue_per_day">Bevétel/nap</option>
+              <option value="sold_per_day">Eladás/nap</option>
+              <option value="sold_per_day_week">Eladás/nap (heti átlag)</option>
+              <option value="sold_now">Összes eladás</option>
+              <option value="price">Ár</option>
+              <option value="rating">Értékelés</option>
+              <option value="first_seen">Legutóbb felfedezett</option>
+            </select>
+          </div>
+        </div>
+        <div class="prow-head" id="shop-thead">
+          <span></span><span></span>
+          <button type="button" data-sort="first_seen">Termék</button>
+          <button type="button" data-sort="revenue_per_day" class="r">Bevétel/nap</button>
+          <button type="button" data-sort="sold_per_day" class="r">Eladás/nap</button>
+          <button type="button" data-sort="sold_now" class="r">Összesen</button>
+          <button type="button" data-sort="price" class="r">Ár</button>
+        </div>
+        <div class="rows" id="shop-rows" role="list">
+          <div class="empty"><b>Termékek betöltése</b>Pár másodperc, és itt lesznek a TikTok Shop kategóriákból gyűjtött termékek.</div>
+        </div>
+        <div class="listfoot"><span><kbd>↑</kbd> <kbd>↓</kbd> lépkedés</span><span><kbd>S</kbd> csillag</span><span><kbd>H</kbd> elrejtés</span><span><kbd>/</kbd> keresés</span></div>
+      </div>
+      <aside class="panel detail" id="shop-detail" aria-label="Kiválasztott termék">
+        <div class="d-empty">Válassz egy terméket a listából.</div>
+      </aside>
+    </div>
+  </section>
+
+  <section id="view-radar" hidden>
     <div class="summary" id="summary">
       <div class="sum"><b>–</b><span>követett termék</span></div>
     </div>
@@ -307,8 +384,31 @@ tr.clickable:hover td { background: var(--sunken); }
   <section id="view-settings" hidden>
     <form id="settings-form" novalidate>
       <div class="settings">
+        <div class="panel card wide">
+          <h2>TikTok Shop termékkereső</h2>
+          <p>Minden reggel végignézi ezeket a TikTok Shop kategóriákat, és elmenti az ársávba eső termékeket. A napi eladást és bevételt a két egymást követő nap különbségéből számolja.</p>
+          <div class="range">
+            <div class="field"><label for="s-shop_min_price">Minimum ár ($)</label><input type="number" id="s-shop_min_price" min="0" max="10000" step="1"></div>
+            <div class="field"><label for="s-shop_max_price">Maximum ár ($)</label><input type="number" id="s-shop_max_price" min="1" max="10000" step="1"></div>
+            <div class="field"><label for="s-shop_min_revenue_day">„Nyerő” ennyi bevételtől ($/nap)</label><input type="number" id="s-shop_min_revenue_day" min="0" max="10000000" step="100"></div>
+          </div>
+          <div class="range">
+            <div class="field"><label for="s-shop_fetches_per_category">Betöltés kategóriánként</label><input type="number" id="s-shop_fetches_per_category" min="1" max="10"><small>Egy betöltés kb. 20 terméket mutat, mindig kicsit mást.</small></div>
+            <div class="field"><label for="s-shop_track_min_sold">Napi követés ennyi eladástól</label><input type="number" id="s-shop_track_min_sold" min="0" step="50"><small>Ha egy termék aznap nem jelenik meg a kategóriában, a saját oldaláról olvassa újra az eladást.</small></div>
+          </div>
+          <div class="field">
+            <span class="lbl">Kategóriák</span>
+            <div class="tags" id="cats"></div>
+            <div class="tagadd">
+              <input type="text" id="cat-input" placeholder="TikTok Shop kategória link, pl. shop.tiktok.com/us/c/fitness/835336" autocomplete="off" aria-label="Új kategória">
+              <button class="btn" type="button" id="cat-add">Hozzáadás</button>
+            </div>
+            <small>Zöld szám: hány ársávba eső terméket hozott az utolsó futásnál. Új kategóriát a TikTok Shop kategóriaoldal linkjével adhatsz hozzá.</small>
+          </div>
+        </div>
+
         <div class="panel card">
-          <h2>Hol keressen</h2>
+          <h2>Videók: hol keressen</h2>
           <p>Ezeknek a hashtageknek a friss videóit nézi át minden reggel.</p>
           <div class="field">
             <span class="lbl">Hashtagek</span>
@@ -325,7 +425,7 @@ tr.clickable:hover td { background: var(--sunken); }
         </div>
 
         <div class="panel card">
-          <h2>Mi kerüljön be</h2>
+          <h2>Videók: mi kerüljön be</h2>
           <p>Ezeken a feltételeken kell átmennie egy videónak, hogy a radar figyelni kezdje.</p>
           <label class="toggle"><input type="checkbox" id="s-require_shop_product"><span class="lbl">Csak TikTok Shop termékes videók</span><small>Csak az kerül be, amihez valódi TikTok Shop termék van kapcsolva, így mindegyiknél lesz ár, eladás és link.</small></label>
           <label class="toggle"><input type="checkbox" id="s-require_product_signal"><span class="lbl">Csak termékre utaló videók</span><small>Ha az előző ki van kapcsolva: a szövegben termékre utaló szavak alapján is beengedi.</small></label>
@@ -336,7 +436,7 @@ tr.clickable:hover td { background: var(--sunken); }
         </div>
 
         <div class="panel card">
-          <h2>Mikor essen ki</h2>
+          <h2>Videók: mikor essen ki</h2>
           <p>A 6 óránkénti mérés ezek alapján dönti el, mit figyel tovább. A csillagozott termékek nem esnek ki lassulás miatt.</p>
           <div class="field"><label for="s-drop_below_views_per_hour">Kiesik, ha óránként ennél kevesebb nézést kap</label><input type="number" id="s-drop_below_views_per_hour" min="0" step="50"><small>Az utolsó két mérés közötti növekedés alapján.</small></div>
           <div class="field"><label for="s-min_snapshots_before_drop">Legalább ennyi mérés után</label><input type="number" id="s-min_snapshots_before_drop" min="2" max="20"><small>Addig nem dobja ki, amíg nincs elég adat a döntéshez.</small></div>
@@ -344,7 +444,7 @@ tr.clickable:hover td { background: var(--sunken); }
       </div>
       <div class="savebar" id="savebar">
         <button class="btn primary" type="submit" id="save">Beállítások mentése</button>
-        <span class="d-note" id="savenote">A következő gyűjtésnél és mérésnél lép életbe. Az időpontokat (reggeli gyűjtés, 6 óránkénti mérés) a GitHub adja.</span>
+        <span class="d-note" id="savenote">A következő futásnál lép életbe. Az időpontokat (reggeli termékkeresés és gyűjtés, 6 óránkénti mérés) a GitHub adja.</span>
       </div>
     </form>
   </section>
@@ -360,9 +460,13 @@ tr.clickable:hover td { background: var(--sunken); }
 (() => {
   const PROJECT = "sapxyvfiqyshwnwarctj";
   const SERVER = "Supabase";
-  const KEYS_INT = ["videos_per_hashtag","trending_count","max_age_days","min_views","min_avg_views_per_hour","drop_below_views_per_hour","min_snapshots_before_drop","min_product_price"];
+  const KEYS_INT = ["videos_per_hashtag","trending_count","max_age_days","min_views","min_avg_views_per_hour","drop_below_views_per_hour","min_snapshots_before_drop","min_product_price",
+    "shop_min_price","shop_max_price","shop_min_revenue_day","shop_fetches_per_category","shop_track_min_sold"];
+  const SHOP_DEFAULTS = { shop_min_price: 30, shop_max_price: 70, shop_min_revenue_day: 1000, shop_fetches_per_category: 3, shop_track_min_sold: 100 };
   const KEYS_BOOL = ["include_trending","require_product_signal","require_shop_product"];
-  const LIMITS = { videos_per_hashtag:[10,1000], trending_count:[0,1000], max_age_days:[1,30], min_views:[0,1e9], min_avg_views_per_hour:[0,1e8], drop_below_views_per_hour:[0,1e8], min_snapshots_before_drop:[2,20], min_product_price:[0,10000] };
+  const LIMITS = { videos_per_hashtag:[10,1000], trending_count:[0,1000], max_age_days:[1,30], min_views:[0,1e9], min_avg_views_per_hour:[0,1e8], drop_below_views_per_hour:[0,1e8], min_snapshots_before_drop:[2,20], min_product_price:[0,10000],
+    shop_min_price:[0,10000], shop_max_price:[1,10000], shop_min_revenue_day:[0,1e7], shop_fetches_per_category:[1,10], shop_track_min_sold:[0,1e9] };
+  const SHOP_SEGMENTS = [["all", "Ársávban"], ["win", "Nyerő"], ["starred", "Csillagos"], ["new", "Új ma"], ["hidden", "Elrejtett"]];
   const SEGMENTS = [
     ["tracking", "Követett"], ["accel", "Gyorsul"], ["starred", "Csillagos"], ["out", "Kiesett"], ["hidden", "Elrejtett"]
   ];
@@ -386,8 +490,9 @@ tr.clickable:hover td { background: var(--sunken); }
   }
   const store = { get(k) { try { return localStorage.getItem("radar-" + k); } catch (_) { return null; } }, set(k, v) { try { localStorage.setItem("radar-" + k, v); } catch (_) {} } };
 
-  let mcp = null, loading = false, tags = [], dirty = false;
-  let state = { videos: [], history: {}, phist: {}, runs: [], settings: {} };
+  let mcp = null, loading = false, tags = [], cats = [], dirty = false;
+  let state = { videos: [], shop: [], history: {}, phist: {}, runs: [], settings: {} };
+  let sview = { seg: store.get("sseg") || "all", sort: store.get("ssort") || "revenue_per_day", q: "", cat: "", selected: null };
   let view = { seg: store.get("seg") || "tracking", sort: store.get("sort") || "recent_views_per_hour", q: "", selected: null, openRun: null };
 
   // ---------- data access ----------
@@ -436,8 +541,14 @@ select json_build_object(
     select product_id, json_agg(json_build_array(extract(epoch from taken_at)::bigint, sold) order by taken_at) pts
     from tiktok_watch.product_snapshots where sold is not null and taken_at > now() - interval '30 days'
     group by product_id) p),
+ 'shop', (select coalesce(json_agg(t), '[]'::json) from (
+    select product_id, title, url, image, category_id, category_name, shop_name, price, price_original, rating, reviews,
+           coalesce(sold_now, last_sold) as sold_now, sold_checked_at, sold_per_day, sold_per_day_week, revenue_per_day,
+           first_seen, last_seen, starred, hidden
+    from tiktok_watch.shop_product_scores where last_seen > now() - interval '21 days' or starred
+    order by hidden, revenue_per_day desc nulls last, last_sold desc nulls last limit 1000) t),
  'runs', (select coalesce(json_agg(r), '[]'::json) from (
-    select id, job, started_at, finished_at, ok, stats, error from tiktok_watch.runs where job in ('collect','track') order by started_at desc limit 20) r),
+    select id, job, started_at, finished_at, ok, stats, error from tiktok_watch.runs where job in ('collect','track','shop') order by started_at desc limit 30) r),
  'settings', (select coalesce(json_object_agg(key, value), '{}'::json) from tiktok_watch.settings)
 ) as data`;
 
@@ -449,7 +560,7 @@ select json_build_object(
       try { rows = await sql(LOAD_SQL); }
       catch (e) { if (e && e.retryable) { await new Promise(r => setTimeout(r, (e.retryAfterMs || 1500) + Math.random() * 1000)); rows = await sql(LOAD_SQL); } else throw e; }
       state = rows[0].data;
-      state.phist = state.phist || {};
+      state.phist = state.phist || {}; state.shop = state.shop || [];
       banner(null);
       renderAll();
     } catch (e) {
@@ -538,10 +649,10 @@ select json_build_object(
   }
 
   // ---------- render ----------
-  function renderAll() { renderRunsMini(); renderSummary(); renderSeg(); renderList(); renderDetail(); renderRuns(); if (!dirty) fillSettings(state.settings); }
+  function renderAll() { renderShopAll(); renderRunsMini(); renderSummary(); renderSeg(); renderList(); renderDetail(); renderRuns(); if (!dirty) fillSettings(state.settings); }
 
   function renderRunsMini() {
-    const pills = [["collect", "Gyűjtés"], ["track", "Mérés"]].map(([job, label]) => {
+    const pills = [["shop", "Termékkeresés"], ["collect", "Gyűjtés"], ["track", "Mérés"]].map(([job, label]) => {
       const r = state.runs.find(x => x.job === job);
       let dot = "dot", txt = "még nem futott";
       if (r) {
@@ -676,6 +787,196 @@ select json_build_object(
         v.description ? el("div", { class: "d-desc" }, v.description) : null));
   }
 
+  // ---------- shop products ----------
+  const catLabel = (c) => { const p = state.shop.find(x => c.endsWith("/" + x.category_id) && x.category_name); return p ? p.category_name : c.split("/")[0].replace(/-/g, " ").replace(/^./, m => m.toUpperCase()); };
+  const shopSet = (k) => { const v = state.settings && state.settings[k]; return v != null ? Number(v) : SHOP_DEFAULTS[k]; };
+  const money = (n) => n == null || isNaN(n) ? "–" : "$" + (Number(n) >= 1e6 ? short(n) : nf(n));
+  const priceOf = (p) => p.price == null ? "–" : "$" + Number(p.price).toFixed(2);
+  const inBand = (p) => p.price != null && Number(p.price) >= shopSet("shop_min_price") && Number(p.price) <= shopSet("shop_max_price");
+  const isWin = (p) => Number(p.revenue_per_day) >= shopSet("shop_min_revenue_day");
+  const isNewToday = (p) => p.first_seen && (Date.now() - new Date(p.first_seen).getTime()) < 30 * 3600e3;
+  function shopFilter(seg) {
+    return (p) => {
+      if (seg === "hidden") return p.hidden;
+      if (p.hidden) return false;
+      if (seg === "starred") return p.starred;
+      if (!inBand(p) && !p.starred) return false;
+      if (seg === "win") return isWin(p);
+      if (seg === "new") return isNewToday(p);
+      return true;
+    };
+  }
+  function shopRows() {
+    const q = sview.q.trim().toLowerCase();
+    let rows = state.shop.filter(shopFilter(sview.seg));
+    if (sview.cat) rows = rows.filter(p => p.category_id === sview.cat);
+    if (q) rows = rows.filter(p => [p.title, p.shop_name, p.category_name].some(s => (s || "").toLowerCase().includes(q)));
+    const key = (p) => sview.sort === "first_seen" ? new Date(p.first_seen).getTime() : Number(p[sview.sort] ?? NaN);
+    const tie = (p) => Number(p.sold_now) || 0;
+    return rows.sort((a, b) => { const x = key(a), y = key(b); const d = (isNaN(y) ? -Infinity : y) - (isNaN(x) ? -Infinity : x); return d || tie(b) - tie(a); });
+  }
+  function renderShopAll() { renderShopSummary(); renderShopSeg(); renderShopCats(); renderShopList(); }
+  function renderShopSummary() {
+    const live = state.shop.filter(p => !p.hidden && inBand(p));
+    const measured = live.filter(p => p.sold_per_day != null);
+    const wins = live.filter(isWin).length;
+    const best = Math.max(0, ...live.map(p => Number(p.revenue_per_day) || 0));
+    const items = measured.length ? [
+      ["", nf(live.length), `termék $${shopSet("shop_min_price")}–${shopSet("shop_max_price")} között`],
+      [wins ? "heat" : "", nf(wins), `hoz legalább $${nf(shopSet("shop_min_revenue_day"))}/napot`],
+      ["", best ? money(best) : "–", "a legjobb napi bevétele"],
+      ["", nf(live.filter(isNewToday).length), "új ma"],
+    ] : [
+      ["", nf(live.length), `termék $${shopSet("shop_min_price")}–${shopSet("shop_max_price")} között`],
+      ["", nf(new Set(live.map(p => p.category_id)).size), "kategóriából"],
+      ["", "holnap", "jön a napi eladás és bevétel (két nap különbsége kell hozzá)"],
+    ];
+    $("shop-summary").replaceChildren(...items.map(([c, v, l]) => el("div", { class: "sum " + c }, el("b", {}, v), el("span", {}, l))));
+  }
+  function renderShopSeg() {
+    $("shop-seg").replaceChildren(...SHOP_SEGMENTS.map(([key, label]) => {
+      const n = state.shop.filter(shopFilter(key)).length;
+      return el("button", { type: "button", "aria-pressed": String(sview.seg === key), title: key === "win" ? `Legalább $${nf(shopSet("shop_min_revenue_day"))} bevétel naponta` : null,
+        onclick: () => { sview.seg = key; store.set("sseg", key); renderShopSeg(); renderShopList(true); } }, label, el("em", {}, n));
+    }));
+  }
+  function renderShopCats() {
+    const counts = new Map();
+    for (const p of state.shop) if (!p.hidden && inBand(p)) counts.set(p.category_id, { name: p.category_name || p.category_id, n: (counts.get(p.category_id)?.n || 0) + 1 });
+    const opts = [...counts.entries()].sort((a, b) => a[1].name.localeCompare(b[1].name, "hu"));
+    if (sview.cat && !counts.has(sview.cat)) sview.cat = "";
+    $("shop-cat").replaceChildren(el("option", { value: "" }, "Minden kategória"), ...opts.map(([id, c]) => el("option", { value: id }, `${c.name} (${c.n})`)));
+    $("shop-cat").value = sview.cat;
+  }
+  function renderShopList(resetSelection) {
+    $("shop-sort").value = sview.sort;
+    for (const b of $("shop-thead").querySelectorAll("button[data-sort]")) b.toggleAttribute("aria-sort", b.dataset.sort === sview.sort);
+    const rows = shopRows();
+    const wide = window.matchMedia("(min-width: 1101px)").matches;
+    if (resetSelection || !rows.some(p => p.product_id === sview.selected)) sview.selected = wide && rows.length ? rows[0].product_id : null;
+    if (!rows.length) {
+      const msgs = {
+        all: ["Még nincs termék", "A reggeli termékkeresés után itt lesznek a beállított ársávba eső TikTok Shop termékek."],
+        win: ["Még nincs nyerő termék", state.shop.some(p => p.sold_per_day != null) ? "Egyik termék sem éri el a beállított napi bevételt. A Beállításokban lejjebb veheted a határt." : "A napi bevételhez két egymást követő nap eladása kell, ez a holnap reggeli futás után jelenik meg."],
+        starred: ["Még nincs csillagozott termék", "A ☆ jellel jelöld meg, ami tetszik. A csillagos termékek eladását akkor is méri, ha kikerülnek a kategórialistából."],
+        new: ["Ma nem jött új termék", "Az utolsó futás nem talált olyan terméket, ami korábban nem volt meg."],
+        hidden: ["Nincs elrejtett termék", "Amit elrejtesz, ide kerül, és innen vissza is állíthatod."],
+      };
+      const [t, s] = sview.q || sview.cat ? ["Nincs találat", "Próbálj más keresőszót vagy kategóriát."] : msgs[sview.seg];
+      $("shop-rows").replaceChildren(el("div", { class: "empty" }, el("b", {}, t), s));
+      renderShopDetail(); return;
+    }
+    const shown = rows.slice(0, 300);
+    $("shop-rows").replaceChildren(...shown.map(shopRowEl));
+    if (rows.length > shown.length) $("shop-rows").append(el("div", { class: "listfoot" }, `Az első ${shown.length} látszik a ${nf(rows.length)}-ból. Szűkíts kategóriára vagy keresésre.`));
+    renderShopDetail();
+  }
+  function thumb(p) {
+    const box = el("div", { class: "thumb", "aria-hidden": "true" });
+    if (p.image) { const img = el("img", { src: p.image, alt: "", loading: "lazy", referrerpolicy: "no-referrer" }); img.addEventListener("error", () => box.replaceChildren("▢")); box.append(img); }
+    else box.append("▢");
+    return box;
+  }
+  function shopStar(p) {
+    return el("button", { type: "button", class: "starbtn", "aria-pressed": String(!!p.starred), "aria-label": p.starred ? "Csillag levétele" : "Csillagozás", title: p.starred ? "Csillag levétele (S)" : "Csillagozás (S)", onclick: () => shopToggleStar(p) }, p.starred ? "★" : "☆");
+  }
+  function shopRowEl(p) {
+    const rev = p.revenue_per_day, spd = p.sold_per_day;
+    return el("div", { class: "prow", role: "listitem", "aria-current": String(sview.selected === p.product_id), "data-id": p.product_id, tabindex: "-1",
+        onclick: (e) => { if (e.target.closest("button, a")) return; shopSelect(p.product_id, true); } },
+      el("div", { class: "c-star" }, shopStar(p)),
+      thumb(p),
+      el("div", { class: "c-prod", style: "min-width:0" }, el("div", { class: "p-title" }, p.title || "Névtelen termék"),
+        el("div", { class: "p-sub" }, [p.category_name, p.shop_name].filter(Boolean).join(" · "), p.rating ? `  ★ ${dec(p.rating)}` : "")),
+      el("div", { class: "c-rev r" }, rev != null ? el("div", { class: "rev-main" + (isWin(p) ? " win" : "") }, money(rev)) : el("div", { class: "pending" }, "holnaptól"),
+        rev != null ? el("div", { class: "num-sub" }, "naponta") : null),
+      el("div", { class: "c-spd r" }, el("div", { class: "num-main" }, spd != null ? "+" + short(spd) : "–"), el("div", { class: "num-sub" }, spd != null ? "db/nap" : "")),
+      el("div", { class: "c-total r" }, el("div", { class: "num-main" }, p.sold_now != null ? short(p.sold_now) : "–"), el("div", { class: "num-sub" }, "összesen")),
+      el("div", { class: "c-price r" }, el("div", { class: "num-main" }, priceOf(p)),
+        p.price_original && Number(p.price_original) > Number(p.price) ? el("div", { class: "num-sub" }, "volt $" + Number(p.price_original).toFixed(2)) : null));
+  }
+  function shopSelect(id, openSheet) {
+    sview.selected = id;
+    for (const r of $("shop-rows").querySelectorAll(".prow")) r.setAttribute("aria-current", String(r.dataset.id === id));
+    renderShopDetail();
+    if (openSheet && !window.matchMedia("(min-width: 1101px)").matches) { $("shop-detail").classList.add("open"); document.body.classList.add("sheet-open"); $("shop-detail").scrollTop = 0; }
+  }
+  function closeShopSheet() { $("shop-detail").classList.remove("open"); document.body.classList.remove("sheet-open"); }
+  function renderShopDetail() {
+    const p = state.shop.find(x => x.product_id === sview.selected), d = $("shop-detail");
+    if (!p) { d.replaceChildren(el("div", { class: "d-empty" }, "Válassz egy terméket a listából.")); closeShopSheet(); return; }
+    const ph = (state.phist || {})[p.product_id] || [];
+    const kvItem = (val, label, cls) => el("div", { class: cls || "" }, el("b", {}, val), el("span", {}, label));
+    const img = p.image ? el("img", { class: "d-img", src: p.image, alt: p.title || "", referrerpolicy: "no-referrer" }) : null;
+    if (img) img.addEventListener("error", () => img.remove());
+    const monthly = p.revenue_per_day != null ? Number(p.revenue_per_day) * 30 : null;
+    d.replaceChildren(
+      el("div", { class: "d-head" },
+        el("button", { type: "button", class: "btn d-close", onclick: closeShopSheet }, "‹ Vissza a listához"),
+        img,
+        el("h2", { class: "d-title" }, p.title || "Névtelen termék"),
+        el("div", { class: "d-cat" }, [p.category_name, p.shop_name ? "bolt: " + p.shop_name : null].filter(Boolean).join(" · ")),
+        el("div", { class: "d-actions" },
+          el("button", { type: "button", class: "btn" + (p.starred ? " star-on" : ""), onclick: () => shopToggleStar(p) }, p.starred ? "★ Csillagozva" : "☆ Csillagozás"),
+          p.hidden ? el("button", { type: "button", class: "btn", onclick: () => shopSetHidden(p, false) }, "Visszaállítás")
+                   : el("button", { type: "button", class: "btn danger", onclick: () => shopSetHidden(p, true) }, "Elrejtés"),
+          p.url ? el("a", { class: "btn", href: p.url, target: "_blank", rel: "noopener" }, "TikTok Shop ↗") : null)),
+      el("div", { class: "d-sec" },
+        el("h3", {}, "Eladás", el("span", {}, p.sold_checked_at ? "mérve " + ago(p.sold_checked_at) : "")),
+        el("div", { class: "kv" },
+          kvItem(p.revenue_per_day != null ? money(p.revenue_per_day) : "–", p.revenue_per_day != null ? "bevétel naponta" : "napi bevétel holnaptól", isWin(p) ? "grow" : ""),
+          kvItem(p.sold_per_day != null ? "+" + nf(p.sold_per_day) : "–", "eladás naponta"),
+          kvItem(p.sold_per_day_week != null ? "+" + nf(p.sold_per_day_week) : "–", "napi átlag a hét alatt"),
+          kvItem(monthly != null ? money(monthly) : "–", "becsült havi bevétel"),
+          kvItem(p.sold_now != null ? nf(p.sold_now) : "–", "eladva összesen"),
+          kvItem(p.first_seen ? ago(p.first_seen) : "–", "óta figyeljük")),
+        ph.length >= 2 ? bigChart(ph, "var(--chart2)", "var(--chart2-fill)", "Eladott darab") : el("div", { class: "d-note" }, "Az eladási görbe a második napi mérés után rajzolódik ki."),
+        el("div", { class: "d-note" }, "A bevétel a mostani ár és a napi eladott darab szorzata, a TikTok Shop összesített eladásszámából számolva. Több változatnál a legolcsóbb árral számol.")),
+      el("div", { class: "d-sec" },
+        el("h3", {}, "Termék"),
+        el("div", { class: "kv" },
+          kvItem(priceOf(p), p.price_original && Number(p.price_original) > Number(p.price) ? "ár, eredetileg $" + Number(p.price_original).toFixed(2) : "ár"),
+          kvItem(p.rating ? "★ " + dec(p.rating) : "–", "értékelés"),
+          kvItem(p.reviews != null ? nf(p.reviews) : "–", "vélemény"))));
+  }
+  const validPid = (p) => /^\d+$/.test(String(p.product_id));
+  async function shopToggleStar(p) {
+    if (!mcp || !validPid(p)) { banner("A csillag most nem menthető, mert az oldal nem éri el az adatbázist.", true); return; }
+    const next = !p.starred; p.starred = next; renderShopSeg(); renderShopList();
+    try { await sql(`update tiktok_watch.shop_products set starred = ${next} where product_id = '${p.product_id}' returning product_id`); }
+    catch (err) { p.starred = !next; banner("Nem sikerült menteni a csillagot. " + errorText(err), true); }
+    renderShopSeg(); renderShopList();
+  }
+  async function shopSetHidden(p, hide) {
+    if (!mcp || !validPid(p)) { banner("Az elrejtés most nem menthető, mert az oldal nem éri el az adatbázist.", true); return; }
+    const prev = { hidden: p.hidden, starred: p.starred };
+    const rows = shopRows(), idx = rows.findIndex(x => x.product_id === p.product_id);
+    p.hidden = hide; if (hide) p.starred = false;
+    if (sview.selected === p.product_id) { const n = rows[idx + 1] || rows[idx - 1]; sview.selected = n && n.product_id !== p.product_id ? n.product_id : null; }
+    renderShopAll();
+    try {
+      await sql(`update tiktok_watch.shop_products set hidden = ${hide}${hide ? ", starred = false" : ""} where product_id = '${p.product_id}' returning product_id`);
+      const name = (p.title || "termék").slice(0, 60);
+      banner(hide ? `Elrejtve: ${name}` : `Visszaállítva: ${name}`, false, hide ? { label: "Visszavonás", fn: () => shopSetHidden(p, false) } : null);
+    } catch (err) { Object.assign(p, prev); banner("Nem sikerült menteni. " + errorText(err), true); renderShopAll(); }
+  }
+  function shopKey(e) {
+    const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement && document.activeElement.tagName);
+    if (e.key === "Escape") { if ($("shop-detail").classList.contains("open")) closeShopSheet(); else if (typing) document.activeElement.blur(); return; }
+    if (typing) return;
+    const rows = shopRows(), i = rows.findIndex(p => p.product_id === sview.selected), cur = rows[i];
+    const go = (n) => { if (!n) return; shopSelect(n.product_id); $("shop-rows").querySelector(`[data-id="${n.product_id}"]`)?.scrollIntoView({ block: "nearest" }); };
+    if (e.key === "ArrowDown" || e.key === "j") { e.preventDefault(); go(rows[Math.min(rows.length - 1, i + 1)]); }
+    else if (e.key === "ArrowUp" || e.key === "k") { e.preventDefault(); go(rows[Math.max(0, i - 1)]); }
+    else if ((e.key === "s" || e.key === "S") && cur) { e.preventDefault(); shopToggleStar(cur); }
+    else if ((e.key === "h" || e.key === "H") && cur) { e.preventDefault(); shopSetHidden(cur, !cur.hidden); }
+    else if (e.key === "/") { e.preventDefault(); $("shop-search").focus(); }
+  }
+  $("shop-sort").addEventListener("change", () => { sview.sort = $("shop-sort").value; store.set("ssort", sview.sort); renderShopList(); });
+  for (const b of $("shop-thead").querySelectorAll("button[data-sort]")) b.addEventListener("click", () => { sview.sort = b.dataset.sort; store.set("ssort", sview.sort); renderShopList(); });
+  $("shop-search").addEventListener("input", () => { sview.q = $("shop-search").value; renderShopList(true); });
+  $("shop-cat").addEventListener("change", () => { sview.cat = $("shop-cat").value; renderShopList(true); });
+
   // ---------- actions ----------
   const validId = (v) => /^\d+$/.test(String(v.video_id));
   async function toggleStar(v) {
@@ -713,27 +1014,31 @@ select json_build_object(
   // ---------- runs ----------
   function renderRuns() {
     if (!state.runs.length) return;
-    const head = el("tr", {}, el("th", {}, "Feladat"), el("th", {}, "Indult"), el("th", {}, "Időtartam"), el("th", {}, "Állapot"), el("th", { class: "r" }, "Átnézett"), el("th", { class: "r" }, "Új / megmért"), el("th", { class: "r" }, "Termékár"), el("th", { class: "r" }, "Hibák"));
+    const head = el("tr", {}, el("th", {}, "Feladat"), el("th", {}, "Indult"), el("th", {}, "Időtartam"), el("th", {}, "Állapot"), el("th", { class: "r" }, "Átnézett"), el("th", { class: "r" }, "Új / megmért"), el("th", { class: "r" }, "Termékoldal"), el("th", { class: "r" }, "Hibák"));
     const body = [];
     for (const r of state.runs) {
       const s = r.stats || {};
       const mins = r.finished_at ? Math.max(1, Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 60000)) + " perc" : "fut";
       const st = !r.finished_at ? el("span", { class: "badge heat" }, "fut") : r.ok ? el("span", { class: "badge grow" }, "rendben") : el("span", { class: "badge", style: "background:var(--bad-soft);color:var(--bad)" }, "hiba");
-      const isCollect = r.job === "collect";
-      const seen = isCollect ? s.seen : (s.tracking || 0) + (s.dropped || 0) + (s.expired || 0) + (s.failed || 0);
-      const made = isCollect ? s.ok : s.tracking;
-      const hasFeeds = isCollect && s.feeds && Object.keys(s.feeds).length;
+      const isCollect = r.job === "collect", isShop = r.job === "shop";
+      const seen = isCollect || isShop ? s.seen : (s.tracking || 0) + (s.dropped || 0) + (s.expired || 0) + (s.failed || 0);
+      const made = isCollect ? s.ok : isShop ? s.in_range : s.tracking;
+      const feeds = isShop ? s.categories : s.feeds;
+      const hasFeeds = (isCollect || isShop) && feeds && Object.keys(feeds).length;
       const open = view.openRun === r.id;
       body.push(el("tr", { class: hasFeeds || r.error ? "clickable" : null, onclick: hasFeeds || r.error ? () => { view.openRun = open ? null : r.id; renderRuns(); } : null },
-        el("td", {}, (hasFeeds || r.error ? (open ? "▾ " : "▸ ") : "") + (isCollect ? "Gyűjtés" : "Mérés")),
+        el("td", {}, (hasFeeds || r.error ? (open ? "▾ " : "▸ ") : "") + (isShop ? "Termékkeresés" : isCollect ? "Gyűjtés" : "Mérés")),
         el("td", {}, when(r.started_at)), el("td", {}, mins), el("td", {}, st),
         el("td", { class: "r" }, nf(seen || 0)), el("td", { class: "r" }, nf(made || 0)),
-        el("td", { class: "r" }, s.product_ok || s.product_failed ? `${nf(s.product_ok || 0)}${s.product_failed ? " / " + nf(s.product_failed) + " hiba" : ""}` : "–"),
-        el("td", { class: "r" }, nf((s.feed_errors || 0) + (s.failed || 0)))));
+        el("td", { class: "r" }, isShop ? (s.product_pages || s.product_page_errors ? `${nf(s.product_pages || 0)}${s.product_page_errors ? " / " + nf(s.product_page_errors) + " hiba" : ""}` : "–")
+          : s.product_ok || s.product_failed ? `${nf(s.product_ok || 0)}${s.product_failed ? " / " + nf(s.product_failed) + " hiba" : ""}` : "–"),
+        el("td", { class: "r" }, nf((s.feed_errors || 0) + (s.failed || 0) + (s.category_errors || 0) + (s.product_page_errors || 0)))));
       if (open) {
         const inner = [];
         if (r.error) inner.push(el("div", { class: "run-err" }, r.error));
-        if (hasFeeds) inner.push(el("div", { class: "feedgrid" }, ...Object.entries(s.feeds).sort((a, b) => (b[1].new || 0) - (a[1].new || 0)).map(([name, f]) =>
+        if (hasFeeds && isShop) inner.push(el("div", { class: "feedgrid" }, ...Object.entries(feeds).sort((a, b) => (b[1].in_range || 0) - (a[1].in_range || 0)).map(([name, f]) =>
+          el("div", { class: f.error ? "err" : "", title: f.error || null }, el("span", {}, catLabel(name)), el("span", {}, f.error && !f.loads ? "hiba" : `${f.in_range || 0} / ${f.products || 0}`)))));
+        else if (hasFeeds) inner.push(el("div", { class: "feedgrid" }, ...Object.entries(feeds).sort((a, b) => (b[1].new || 0) - (a[1].new || 0)).map(([name, f]) =>
           el("div", { class: f.error ? "err" : "", title: f.error || null }, el("span", {}, name), el("span", {}, f.error ? "hiba" : `${f.new || 0} új / ${f.seen || 0}`)))));
         body.push(el("tr", { class: "feeds" }, el("td", { colspan: 8 }, ...inner)));
       }
@@ -748,7 +1053,9 @@ select json_build_object(
   }
   function fillSettings(s) {
     if (!s) return;
-    for (const k of KEYS_INT) if (s[k] != null) $("s-" + k).value = s[k];
+    for (const k of KEYS_INT) { const v = s[k] != null ? s[k] : SHOP_DEFAULTS[k]; if (v != null) $("s-" + k).value = v; }
+    cats = Array.isArray(s.shop_categories) ? s.shop_categories.slice() : [];
+    renderCats();
     for (const k of KEYS_BOOL) if (s[k] != null) $("s-" + k).checked = !!s[k];
     tags = Array.isArray(s.hashtags) ? s.hashtags.slice() : [];
     renderTags();
@@ -768,8 +1075,32 @@ select json_build_object(
     $("tag-input").value = ""; renderTags(); if (added) markDirty();
   }
   $("tag-add").addEventListener("click", addTag);
+  function lastCatStats() {
+    const r = state.runs.find(x => x.job === "shop" && x.stats && x.stats.categories);
+    return r ? r.stats.categories : {};
+  }
+  function renderCats() {
+    const st = lastCatStats();
+    $("cats").replaceChildren(...cats.map((c, i) => el("span", { class: "tag cat", title: c }, catLabel(c),
+      st[c] ? el("em", {}, st[c].in_range || 0) : null,
+      el("button", { type: "button", "aria-label": catLabel(c) + " törlése", onclick: () => { cats.splice(i, 1); renderCats(); markDirty(); } }, "×"))));
+    if (!cats.length) $("cats").append(el("span", { class: "d-note" }, "Nincs kategória. Adj hozzá legalább egyet."));
+  }
+  function addCat() {
+    let added = false, bad = false;
+    for (const part of $("cat-input").value.split(/[\s,]+/).filter(Boolean)) {
+      const m = part.match(/(?:\/c\/)?([a-z0-9-]+)\/(\d{4,})/i);
+      if (!m) { bad = true; continue; }
+      const c = m[1].toLowerCase() + "/" + m[2];
+      if (!cats.includes(c)) { cats.push(c); added = true; }
+    }
+    if (bad) $("savenote").textContent = "Ezt nem ismertem fel kategóriaként. Másold be a TikTok Shop kategóriaoldal linkjét (…/us/c/nev/12345).";
+    $("cat-input").value = ""; renderCats(); if (added) markDirty();
+  }
+  $("cat-add").addEventListener("click", addCat);
+  $("cat-input").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addCat(); } });
   $("tag-input").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addTag(); } });
-  $("settings-form").addEventListener("input", (e) => { if (e.target.id !== "tag-input") markDirty(); });
+  $("settings-form").addEventListener("input", (e) => { if (e.target.id !== "tag-input" && e.target.id !== "cat-input") markDirty(); });
 
   $("settings-form").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -786,12 +1117,16 @@ select json_build_object(
       vals[k] = n;
     }
     for (const k of KEYS_BOOL) vals[k] = $("s-" + k).checked;
+    if (vals.shop_min_price >= vals.shop_max_price) { note.textContent = "A minimum ár legyen kisebb a maximum árnál."; $("s-shop_min_price").focus(); return; }
+    if (!cats.length) { note.textContent = "Legalább egy TikTok Shop kategória kell."; return; }
+    vals.shop_categories = cats.slice();
     const rows = Object.entries(vals).map(([k, v]) => `('${k}', $j$${JSON.stringify(v)}$j$::jsonb, now())`).join(",\n");
     const q = `insert into tiktok_watch.settings (key, value, updated_at) values\n${rows}\non conflict (key) do update set value = excluded.value, updated_at = now()\nreturning key`;
     $("save").disabled = true; $("save").textContent = "Mentés…";
     try {
       await sql(q);
       state.settings = Object.assign({}, state.settings, vals);
+      renderShopAll();
       dirty = false; $("savebar").classList.remove("dirty");
       note.textContent = "Mentve. A következő gyűjtésnél és mérésnél már ezekkel fut.";
     } catch (err) {
@@ -801,16 +1136,18 @@ select json_build_object(
 
   // ---------- tabs, filters, keyboard ----------
   function selectTab(name) {
-    for (const t of ["radar", "settings", "runs"]) { $("tab-" + t).setAttribute("aria-selected", String(t === name)); $("view-" + t).hidden = t !== name; }
+    for (const t of ["shop", "radar", "settings", "runs"]) { $("tab-" + t).setAttribute("aria-selected", String(t === name)); $("view-" + t).hidden = t !== name; }
     store.set("tab", name);
   }
-  for (const t of ["radar", "settings", "runs"]) $("tab-" + t).addEventListener("click", () => selectTab(t));
+  for (const t of ["shop", "radar", "settings", "runs"]) $("tab-" + t).addEventListener("click", () => selectTab(t));
   $("sort").addEventListener("change", () => { view.sort = $("sort").value; store.set("sort", view.sort); renderList(); });
   for (const b of $("thead").querySelectorAll("button[data-sort]")) b.addEventListener("click", () => { view.sort = b.dataset.sort; store.set("sort", view.sort); renderList(); });
   $("search").addEventListener("input", () => { view.q = $("search").value; renderList(true); });
   $("refresh").addEventListener("click", load);
   document.addEventListener("keydown", (e) => {
-    if ($("view-radar").hidden || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (!$("view-shop").hidden) { shopKey(e); return; }
+    if ($("view-radar").hidden) return;
     const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement && document.activeElement.tagName);
     if (e.key === "Escape") { if ($("detail").classList.contains("open")) closeSheet(); else if (typing) document.activeElement.blur(); return; }
     if (typing) return;
@@ -823,7 +1160,9 @@ select json_build_object(
   });
 
   const savedTab = store.get("tab");
-  selectTab(location.hash === "#beallitasok" ? "settings" : (savedTab === "settings" || savedTab === "runs" ? savedTab : "radar"));
+  selectTab(location.hash === "#beallitasok" ? "settings" : (["shop", "radar", "settings", "runs"].includes(savedTab) ? savedTab : "shop"));
+  renderShopSeg();
+  renderCats();
   renderSeg();
   renderTags();
 
