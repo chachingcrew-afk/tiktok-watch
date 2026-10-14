@@ -53,7 +53,7 @@ def tracking_videos(conn) -> list[tuple[str, str, datetime, int, bool]]:
     with conn.cursor() as cur:
         cur.execute(
             "select video_id, url, created_at_tt, fail_count, starred from tiktok_watch.videos"
-            " where status = 'tracking' order by starred desc, first_seen"
+            " where status = 'tracking' and not hidden order by starred desc, first_seen"
         )
         return cur.fetchall()
 

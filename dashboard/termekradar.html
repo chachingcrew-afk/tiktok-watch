@@ -79,6 +79,11 @@ select, input[type="number"], input[type="text"] { font: inherit; color: var(--f
 .star:hover { color: var(--star); }
 .star[aria-pressed="true"] { color: var(--star); }
 .star:disabled { opacity: .5; cursor: default; }
+.linkbtn { border: 0; background: none; padding: 0; color: var(--muted); font: inherit; font-size: 13px; text-decoration: underline; text-underline-offset: 2px; }
+.linkbtn:hover { color: var(--bad); }
+.linkbtn.restore:hover { color: var(--accent); }
+.msg { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.msg .btn { padding: 4px 10px; font-size: 13px; }
 @media (max-width: 720px) { .row { grid-template-columns: minmax(0, 1fr) 96px; } .row .metrics { grid-column: 1 / -1; } }
 .row .title { font-weight: 600; overflow-wrap: anywhere; }
 .row .meta { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
@@ -164,6 +169,7 @@ td.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
           <option value="tracking">Csak a követetteket</option>
           <option value="accel">Csak a gyorsulókat</option>
           <option value="starred">Csak a csillagozottakat</option>
+          <option value="hidden">Elrejtettek</option>
           <option value="all">Mindet (kiesettekkel együtt)</option>
         </select>
       </label>
@@ -266,12 +272,23 @@ td.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
       default: return "Nem sikerült betölteni az adatokat" + (e && e.message ? ": " + e.message : ".");
     }
   }
-  function pageMsg(text, isErr) { const m = $("pagemsg"); if (!text) { m.hidden = true; return; } m.className = "msg" + (isErr ? " err" : ""); m.textContent = text; m.hidden = false; }
+  let msgTimer = null;
+  function pageMsg(text, isErr, action) {
+    const m = $("pagemsg"); clearTimeout(msgTimer);
+    if (!text) { m.hidden = true; return; }
+    m.className = "msg" + (isErr ? " err" : "");
+    m.replaceChildren(el("span", {}, text));
+    if (action) {
+      m.append(el("button", {type: "button", class: "btn", onclick: () => { m.hidden = true; action.fn(); }}, action.label));
+      msgTimer = setTimeout(() => { m.hidden = true; }, 10000);
+    }
+    m.hidden = false;
+  }
 
   const LOAD_SQL = `
 select json_build_object(
  'videos', (select coalesce(json_agg(t), '[]'::json) from (
-    select * from tiktok_watch.video_scores order by starred desc, last_snapshot desc limit 400) t),
+    select * from tiktok_watch.video_scores order by hidden, starred desc, last_snapshot desc limit 400) t),
  'history', (select coalesce(json_object_agg(video_id, pts), '{}'::json) from (
     select s.video_id, json_agg(json_build_array(extract(epoch from s.taken_at)::bigint, s.views) order by s.taken_at) pts
     from tiktok_watch.snapshots s join tiktok_watch.videos v using (video_id)
@@ -321,9 +338,10 @@ select json_build_object(
   }
 
   function renderTiles() {
-    const tr = state.videos.filter(v => v.status === "tracking");
+    const visible = state.videos.filter(v => !v.hidden);
+    const tr = visible.filter(v => v.status === "tracking");
     const accel = tr.filter(v => Number(v.acceleration) > 1);
-    const fresh = state.videos.filter(v => { const h = history(v.video_id); return h.length && (Date.now()/1000 - h[0][0]) < 86400; });
+    const fresh = visible.filter(v => { const h = history(v.video_id); return h.length && (Date.now()/1000 - h[0][0]) < 86400; });
     const top = Math.max(0, ...tr.map(v => Number(v.recent_views_per_hour) || 0));
     const vals = [nf(tr.length), nf(accel.length), nf(fresh.length), tr.length ? short(top) : "–"];
     [...$("tiles").querySelectorAll(".v")].forEach((n, i) => n.textContent = vals[i]);
@@ -391,6 +409,7 @@ select json_build_object(
   function renderList() {
     const sort = $("sort").value, show = $("show").value;
     let rows = state.videos.slice();
+    rows = show === "hidden" ? rows.filter(v => v.hidden) : rows.filter(v => !v.hidden);
     if (show === "tracking") rows = rows.filter(v => v.status === "tracking");
     if (show === "accel") rows = rows.filter(v => v.status === "tracking" && Number(v.acceleration) > 1);
     if (show === "starred") rows = rows.filter(v => v.starred);
@@ -400,7 +419,7 @@ select json_build_object(
       const none = !state.videos.length;
       $("list").replaceChildren(el("div", {class:"empty"},
         el("b", {}, none ? "Még nincs videó" : "Nincs a szűrésnek megfelelő videó"),
-        none ? "Az első napi gyűjtés után itt jelennek meg a friss, gyorsan növő termékes videók." : show === "starred" ? "Még nem csillagoztál videót. A videók címe előtti ☆ jellel jelölheted meg, ami tetszik." : "Válts a „Mutasd” szűrőn, vagy várd meg a következő mérést."));
+        none ? "Az első napi gyűjtés után itt jelennek meg a friss, gyorsan növő termékes videók." : show === "hidden" ? "Nincs elrejtett videó." : show === "starred" ? "Még nem csillagoztál videót. A videók címe előtti ☆ jellel jelölheted meg, ami tetszik." : "Válts a „Mutasd” szűrőn, vagy várd meg a következő mérést."));
       return;
     }
     $("list").replaceChildren(...rows.map(rowEl));
@@ -418,7 +437,10 @@ select json_build_object(
           el("div", {class:"title"}, title.length > 110 ? title.slice(0, 110) + "…" : title)),
         el("div", {class:"meta"}, accelPill(v), " ", "@" + (v.author || "?"), " · ", Math.round(v.age_hours) + " órás · ",
           el("a", {href: v.url, target: "_blank", rel: "noopener"}, "Megnyitás"), " · ",
-          el("a", {href: "#", onclick: (e) => { e.preventDefault(); openId = openId === v.video_id ? null : v.video_id; renderList(); }}, openId === v.video_id ? "Bezárás" : "Grafikon"))),
+          el("a", {href: "#", onclick: (e) => { e.preventDefault(); openId = openId === v.video_id ? null : v.video_id; renderList(); }}, openId === v.video_id ? "Bezárás" : "Grafikon"), " · ",
+          v.hidden
+            ? el("button", {type: "button", class: "linkbtn restore", onclick: () => setHidden(v, false)}, "Visszaállítás")
+            : el("button", {type: "button", class: "linkbtn", title: "Eltávolítás a listából és a mérésből", onclick: () => setHidden(v, true)}, "Elrejtés"))),
       sparkline(history(v.video_id), 140, 40, 3, false),
       el("div", {class:"metrics"},
         metric(short(v.recent_views_per_hour), "nézés/óra"),
@@ -433,6 +455,25 @@ select json_build_object(
       row.append(box);
     }
     return row;
+  }
+  async function setHidden(v, hide) {
+    if (!mcp || !/^\d+$/.test(String(v.video_id))) { pageMsg("Az elrejtés most nem menthető, mert az oldal nem éri el az adatbázist.", true); return; }
+    const prev = { hidden: v.hidden, starred: v.starred };
+    v.hidden = hide; if (hide) v.starred = false;
+    if (openId === v.video_id) openId = null;
+    renderList(); renderTiles();
+    const q = hide
+      ? `update tiktok_watch.videos set hidden = true, hidden_at = now(), starred = false, starred_at = null where video_id = '${v.video_id}' returning video_id`
+      : `update tiktok_watch.videos set hidden = false, hidden_at = null where video_id = '${v.video_id}' returning video_id`;
+    try {
+      await sql(q);
+      const name = (v.product_title || v.description || "A videó").replace(/#\w+/g, "").trim().slice(0, 50);
+      pageMsg(hide ? `Elrejtve: ${name}` : `Visszaállítva: ${name}`, false, hide ? { label: "Visszavonás", fn: () => setHidden(v, false) } : null);
+    } catch (err) {
+      Object.assign(v, prev);
+      pageMsg("Nem sikerült menteni. " + errorText(err), true);
+    }
+    renderList(); renderTiles();
   }
   async function toggleStar(v, btn) {
     if (!mcp || !/^\d+$/.test(String(v.video_id))) { pageMsg("A csillagozás most nem menthető, mert az oldal nem éri el az adatbázist.", true); return; }
