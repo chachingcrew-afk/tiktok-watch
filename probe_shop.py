@@ -54,8 +54,18 @@ def analyse(url, status, final, html) -> dict:
 def main() -> None:
     _, proxies = proxy_settings(os.environ.get("PROXY_URL"))
     results = {}
-    status, final, html = get(BASE, proxies)
-    results["home"] = analyse(BASE, status, final, html)
+    conn0 = db.connect()
+    with conn0.cursor() as cur:
+        cur.execute("select product_url from tiktok_watch.videos where product_url like '%/pdp/%' order by product_sold desc nulls last limit 1")
+        seed = cur.fetchone()[0]
+    conn0.close()
+    status, final, html = get(seed, proxies)
+    results["home"] = analyse(seed, status, final, html)
+    if status:
+        t = _unescape(html)
+        results["pdp_other_products"] = len(set(re.findall(r'"product_id":\s*"?(\d{15,20})', t)))
+        results["pdp_link_samples"] = sorted(set(re.findall(r'https://shop\.tiktok\.com/us/[a-z\-]+/[^"\s<>]{0,80}', t)))[:40]
+        results["pdp_keys"] = sorted(set(re.findall(r'"(\w*(?:recommend|similar|related|store|shop_info|seller)\w*)":', t)))[:60]
     links = set()
     if status:
         for href in re.findall(r'href="([^"]+)"', html):
