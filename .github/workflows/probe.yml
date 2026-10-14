@@ -2,6 +2,11 @@ name: Probe product page
 
 on:
   workflow_dispatch:
+    inputs:
+      script:
+        description: 'Probe script to run'
+        type: string
+        default: 'probe_product.py'
 
 jobs:
   run:
@@ -14,7 +19,7 @@ jobs:
           python-version: '3.12'
           cache: pip
       - run: pip install -r requirements.txt
-      - run: python probe_product.py
+      - run: python ${{ inputs.script || 'probe_product.py' }}
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           PROXY_URL: ${{ secrets.PROXY_URL }}
