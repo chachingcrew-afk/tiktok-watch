@@ -15,6 +15,7 @@ from session import setup_logging
 
 log = logging.getLogger("tiktok-watch")
 STATS: Counter = Counter()  # also written to tiktok_watch.runs for the dashboard
+CONCURRENCY = int(os.environ.get("TRACK_CONCURRENCY", "4"))
 
 
 async def main() -> None:
@@ -45,25 +46,39 @@ async def run(cfg: Config, conn) -> None:
     if not req_proxy:
         log.warning("No PROXY_URL set. From a server TikTok will very likely block requests.")
 
+    # Too-old videos are expired without a network call.
+    active = []
     for video_id, url, created_at, _fails, starred in videos:
-        # Skip the network call for videos that are already too old
         if (now - created_at).total_seconds() > cfg.max_age_days * 86400:
             db.set_status(conn, video_id, "expired")
             conn.commit()
             stats["expired"] += 1
-            continue
-        try:
-            data = await asyncio.to_thread(fetch_video, url, video_id, req_proxy)
-            parsed = parse_video(data)
-            if parsed is None:
-                raise ValueError("unparsable response")
-        except Exception as e:
-            log.warning("Fetch failed for %s: %s", url, e)
+        else:
+            active.append((video_id, url, created_at, starred))
+
+    # Fetch a few pages at a time (each request goes out through its own proxy IP);
+    # database writes stay sequential on this one connection.
+    gate = asyncio.Semaphore(CONCURRENCY)
+
+    async def fetch(video_id, url):
+        async with gate:
+            await asyncio.sleep(random.uniform(0.2, 1.5))
+            try:
+                data = await asyncio.to_thread(fetch_video, url, video_id, req_proxy)
+                parsed = parse_video(data)
+                return parsed if parsed is not None else ValueError("unparsable response")
+            except Exception as e:
+                return e
+
+    results = await asyncio.gather(*(fetch(v[0], v[1]) for v in active))
+
+    for (video_id, url, created_at, starred), parsed in zip(active, results):
+        if isinstance(parsed, Exception):
+            log.warning("Fetch failed for %s: %s", url, parsed)
             db.mark_failed(conn, video_id, cfg.max_fail_count)
             conn.commit()
             stats["failed"] += 1
             continue
-
         db.add_snapshot(conn, video_id, parsed.views, parsed.likes, parsed.comments, parsed.shares, parsed.saves)
         snaps = db.recent_snapshots(conn, video_id, n=max(cfg.min_snapshots_before_drop, 2))
         status = tracking_decision(created_at, snaps, cfg, datetime.now(timezone.utc))
@@ -72,7 +87,6 @@ async def run(cfg: Config, conn) -> None:
         db.set_status(conn, video_id, status)
         conn.commit()
         stats[status] += 1
-        await asyncio.sleep(random.uniform(1, 2.5))
 
     log.info("Done. %s", dict(stats))
     if videos and stats["failed"] == len(videos):
