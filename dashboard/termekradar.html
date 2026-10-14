@@ -1,0 +1,518 @@
+<title>Termékradar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one column operator console. Status strip, two tabs (videos / settings), video rows with sparkline. */
+:root {
+  --bg: #f3f5f7;
+  --surface: #ffffff;
+  --fg: #16202b;
+  --muted: #5b6774;
+  --line: #dde3e9;
+  --accent: #0f7c78;
+  --accent-soft: #dff1ef;
+  --hot: #c2410c;
+  --hot-soft: #fdebe1;
+  --good: #1f7a3d;
+  --bad: #b42318;
+  --bad-soft: #fce8e6;
+  --chart: #0f7c78;
+  --chart-fill: rgba(15, 124, 120, .12);
+  --f-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1418; --surface: #151d23; --fg: #e5ebef; --muted: #93a1ad; --line: #26323b;
+    --accent: #3cc2bb; --accent-soft: #123331; --hot: #fb8a52; --hot-soft: #3a1f12;
+    --good: #5bc27d; --bad: #f2776b; --bad-soft: #3b1714;
+    --chart: #3cc2bb; --chart-fill: rgba(60, 194, 187, .14); color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1418; --surface: #151d23; --fg: #e5ebef; --muted: #93a1ad; --line: #26323b;
+  --accent: #3cc2bb; --accent-soft: #123331; --hot: #fb8a52; --hot-soft: #3a1f12;
+  --good: #5bc27d; --bad: #f2776b; --bad-soft: #3b1714;
+  --chart: #3cc2bb; --chart-fill: rgba(60, 194, 187, .14); color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--f-body); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 1040px; margin: 0 auto; padding: 24px 16px 64px; display: grid; gap: 20px; }
+header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
+h1 { font-family: var(--f-display); font-size: 30px; line-height: 1.1; margin: 0; letter-spacing: -.01em; }
+h1 span { color: var(--accent); }
+.sub { color: var(--muted); margin: 4px 0 0; font-size: 14px; }
+button { font: inherit; cursor: pointer; }
+.btn { border: 1px solid var(--line); background: var(--surface); color: var(--fg); border-radius: 8px; padding: 8px 14px; font-weight: 500; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.btn:disabled { opacity: .5; cursor: default; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.status { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 4px 10px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); color: var(--muted); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot.ok { background: var(--good); } .dot.err { background: var(--bad); } .dot.run { background: var(--hot); }
+
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+.tab { border: 0; background: none; padding: 10px 14px; color: var(--muted); font-weight: 600; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tab[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
+
+.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 720px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-width: 0; }
+.tile .k { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.tile .v { font-family: var(--f-display); font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.controls label { font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+select, input[type="number"], input[type="text"] { font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
+
+.list { display: grid; gap: 8px; }
+.row { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; grid-template-columns: minmax(0, 1fr) 140px auto; gap: 14px; align-items: center; }
+.row.hot { border-left: 3px solid var(--hot); }
+@media (max-width: 720px) { .row { grid-template-columns: minmax(0, 1fr) 96px; } .row .metrics { grid-column: 1 / -1; } }
+.row .title { font-weight: 600; overflow-wrap: anywhere; }
+.row .meta { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.row .meta a { color: var(--accent); }
+.metrics { display: flex; gap: 14px; flex-wrap: wrap; justify-content: flex-end; font-family: var(--f-mono); font-size: 13px; font-variant-numeric: tabular-nums; }
+.metric { display: grid; text-align: right; min-width: 64px; }
+.metric b { font-weight: 500; font-size: 15px; color: var(--fg); }
+.metric span { color: var(--muted); font-family: var(--f-body); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+.pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+.pill.hot { background: var(--hot-soft); color: var(--hot); }
+.pill.off { background: var(--line); color: var(--muted); }
+.spark { width: 100%; height: 40px; display: block; }
+.detail { grid-column: 1 / -1; border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 8px; }
+.detail svg { width: 100%; height: 200px; display: block; }
+.desc { color: var(--muted); font-size: 14px; max-width: 75ch; overflow-wrap: anywhere; }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 18px; }
+.panel h2 { font-family: var(--f-display); font-size: 19px; margin: 0; }
+.fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; }
+@media (max-width: 720px) { .fields { grid-template-columns: minmax(0, 1fr); } }
+.field { display: grid; gap: 4px; min-width: 0; }
+.field label { font-weight: 600; font-size: 14px; }
+.field small { color: var(--muted); font-size: 13px; }
+.field input[type="number"] { width: 100%; max-width: 220px; font-family: var(--f-mono); }
+.toggle { display: flex; gap: 8px; align-items: center; font-weight: 600; font-size: 14px; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag { display: inline-flex; gap: 6px; align-items: center; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 3px 4px 3px 10px; font-size: 13px; font-weight: 500; }
+.tag button { border: 0; background: none; color: inherit; padding: 0 6px; font-size: 15px; line-height: 1; }
+.tagadd { display: flex; gap: 8px; flex-wrap: wrap; }
+.tagadd input { flex: 1 1 200px; min-width: 0; }
+.savebar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.note { font-size: 13px; color: var(--muted); }
+.msg { padding: 10px 14px; border-radius: 8px; font-size: 14px; background: var(--accent-soft); color: var(--fg); }
+.msg.err { background: var(--bad-soft); }
+.empty { text-align: center; padding: 40px 16px; color: var(--muted); background: var(--surface); border: 1px dashed var(--line); border-radius: 10px; }
+.empty b { color: var(--fg); display: block; font-size: 16px; margin-bottom: 4px; }
+.tbl { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; }
+td.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: no-preference) { .row { transition: border-color .15s; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Termék<span>radar</span></h1>
+      <p class="sub">Friss, gyorsan növő termékes TikTok videók, 6 óránként újramérve</p>
+    </div>
+    <button class="btn" id="refresh" type="button">Frissítés</button>
+  </header>
+
+  <div class="status" id="status"><span class="chip"><span class="dot"></span>Adatok betöltése…</span></div>
+  <div id="pagemsg" hidden></div>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" id="tab-videos" aria-selected="true" type="button">Videók</button>
+    <button class="tab" role="tab" id="tab-settings" aria-selected="false" type="button">Beállítások</button>
+  </div>
+
+  <section id="view-videos" class="wrap" style="padding:0">
+    <div class="tiles" id="tiles">
+      <div class="tile"><div class="k">Követett videó</div><div class="v">–</div></div>
+      <div class="tile"><div class="k">Gyorsuló most</div><div class="v">–</div></div>
+      <div class="tile"><div class="k">Új az utolsó 24 órában</div><div class="v">–</div></div>
+      <div class="tile"><div class="k">Leggyorsabb nézés/óra</div><div class="v">–</div></div>
+    </div>
+    <div class="controls">
+      <label for="sort">Rendezés
+        <select id="sort">
+          <option value="recent_views_per_hour">Nézés/óra (utolsó 6 óra)</option>
+          <option value="acceleration">Gyorsulás</option>
+          <option value="growth_pct_last_check">Növekedés % az utolsó mérés óta</option>
+          <option value="shares_per_1k">Megosztás / 1000 nézés</option>
+          <option value="saves_per_1k">Mentés / 1000 nézés</option>
+          <option value="views">Összes nézés</option>
+          <option value="newest">Legfrissebb videó</option>
+        </select>
+      </label>
+      <label for="show">Mutasd
+        <select id="show">
+          <option value="tracking">Csak a követetteket</option>
+          <option value="accel">Csak a gyorsulókat</option>
+          <option value="all">Mindet (kiesettekkel együtt)</option>
+        </select>
+      </label>
+    </div>
+    <div class="list" id="list">
+      <div class="empty"><b>Videók betöltése</b>Pár másodperc, és itt lesznek a követett videók.</div>
+    </div>
+  </section>
+
+  <section id="view-settings" hidden>
+    <form class="panel" id="settings-form" novalidate>
+      <h2>Mit gyűjtsön</h2>
+      <div class="field">
+        <label for="tag-input">Hashtagek</label>
+        <small>Ezeknek a hashtageknek a videóit nézi át naponta. Írd be # nélkül, Enterrel adod hozzá.</small>
+        <div class="tags" id="tags"></div>
+        <div class="tagadd">
+          <input type="text" id="tag-input" placeholder="pl. petfinds" autocomplete="off">
+          <button class="btn" type="button" id="tag-add">Hozzáadás</button>
+        </div>
+      </div>
+      <div class="fields">
+        <div class="field"><label for="s-videos_per_hashtag">Videó hashtagenként</label><small>Ennyi videót néz át minden hashtagből. Több = alaposabb, de lassabb és nagyobb a blokkolás esélye.</small><input type="number" id="s-videos_per_hashtag" min="10" max="1000" step="10"></div>
+        <div class="field"><label for="s-trending_count">Trending videók száma</label><small>Ennyit néz át a trending feedből.</small><input type="number" id="s-trending_count" min="0" max="1000" step="10"></div>
+        <div class="field"><span class="toggle"><input type="checkbox" id="s-include_trending"><label for="s-include_trending">Trending feed is</label></span><small>A hashtageken kívül a TikTok trending feedjét is átnézi.</small></div>
+        <div class="field"><span class="toggle"><input type="checkbox" id="s-require_product_signal"><label for="s-require_product_signal">Csak termékes videók</label></span><small>Csak az kerül be, amin TikTok Shop termék van, vagy a szöveg termékre utal.</small></div>
+      </div>
+      <h2>Mikor kerüljön be</h2>
+      <div class="fields">
+        <div class="field"><label for="s-max_age_days">Max. életkor (nap)</label><small>Ennél idősebb videó nem kerül be, és a követésből is kiesik.</small><input type="number" id="s-max_age_days" min="1" max="30"></div>
+        <div class="field"><label for="s-min_views">Minimum nézés</label><small>Ennyi nézés alatt nem kerül be.</small><input type="number" id="s-min_views" min="0" step="1000"></div>
+        <div class="field"><label for="s-min_avg_views_per_hour">Minimum átlagos nézés/óra</label><small>Összes nézés osztva a feltöltés óta eltelt órákkal.</small><input type="number" id="s-min_avg_views_per_hour" min="0" step="50"></div>
+      </div>
+      <h2>Mikor essen ki</h2>
+      <div class="fields">
+        <div class="field"><label for="s-drop_below_views_per_hour">Kiesik, ha lassabb mint (nézés/óra)</label><small>Az utolsó két mérés közötti növekedés alapján.</small><input type="number" id="s-drop_below_views_per_hour" min="0" step="50"></div>
+        <div class="field"><label for="s-min_snapshots_before_drop">Legalább ennyi mérés után</label><small>Addig nem dobja ki, amíg nincs elég mérés a döntéshez.</small><input type="number" id="s-min_snapshots_before_drop" min="2" max="20"></div>
+      </div>
+      <div class="savebar">
+        <button class="btn primary" type="submit" id="save">Beállítások mentése</button>
+        <span class="note" id="savenote">A következő futásnál lép életbe. Az időzítést (napi gyűjtés, 6 órás mérés) a GitHub workflow adja.</span>
+      </div>
+      <div id="savemsg" hidden></div>
+    </form>
+    <div class="panel" style="margin-top:20px">
+      <h2>Utolsó futások</h2>
+      <div class="tbl" id="runs"><p class="note">Még nincs futás.</p></div>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const PROJECT = "sapxyvfiqyshwnwarctj";
+  const SERVER = "Supabase";
+  const KEYS_INT = ["videos_per_hashtag","trending_count","max_age_days","min_views","min_avg_views_per_hour","drop_below_views_per_hour","min_snapshots_before_drop"];
+  const KEYS_BOOL = ["include_trending","require_product_signal"];
+  const LIMITS = { videos_per_hashtag:[10,1000], trending_count:[0,1000], max_age_days:[1,30], min_views:[0,1e9], min_avg_views_per_hour:[0,1e8], drop_below_views_per_hour:[0,1e8], min_snapshots_before_drop:[2,20] };
+
+  const $ = (id) => document.getElementById(id);
+  const fmt = new Intl.NumberFormat("hu-HU");
+  const nf = (n) => n == null || isNaN(n) ? "–" : fmt.format(Math.round(n));
+  const short = (n) => { if (n == null || isNaN(n)) return "–"; n = Number(n); if (n >= 1e6) return (n/1e6).toFixed(n >= 1e7 ? 0 : 1).replace(".", ",") + " M"; if (n >= 1e4) return Math.round(n/1e3) + " e"; return fmt.format(Math.round(n)); };
+  const ago = (iso) => { if (!iso) return "–"; const h = (Date.now() - new Date(iso).getTime()) / 36e5; if (h < 1) return Math.max(1, Math.round(h*60)) + " perce"; if (h < 48) return Math.round(h) + " órája"; return Math.round(h/24) + " napja"; };
+  function el(tag, attrs, ...kids) {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v == null || v === false) continue;
+      if (k === "class") n.className = v; else if (k.startsWith("on")) n.addEventListener(k.slice(2), v); else n.setAttribute(k, v);
+    }
+    for (const c of kids.flat()) if (c != null && c !== false) n.append(c instanceof Node ? c : document.createTextNode(String(c)));
+    return n;
+  }
+
+  let mcp = null, state = { videos: [], history: {}, runs: [], settings: {} }, tags = [], openId = null, loading = false;
+
+  // ---- connector access ----
+  function parseSqlPayload(payload) {
+    let text = typeof payload === "string" ? payload : (payload && typeof payload.result === "string" ? payload.result : null);
+    if (text == null) { if (Array.isArray(payload)) return payload; text = JSON.stringify(payload); }
+    // The connector wraps rows in <untrusted-data-…> tags and also names the tag in its preamble, so match the block that starts with "["
+    const m = text.match(/<untrusted-data-[^>]*>\s*(\[[\s\S]*\])\s*<\/untrusted-data/);
+    const body = m ? m[1] : text.slice(text.indexOf("["), text.lastIndexOf("]") + 1);
+    return JSON.parse(body);
+  }
+  async function sql(query) {
+    const res = await mcp.callTool(SERVER, "execute_sql", { project_id: PROJECT, query }, { cache: false });
+    return parseSqlPayload(res.payload ?? (res.content && res.content[0] && res.content[0].text));
+  }
+  function errorText(e) {
+    const code = e && e.code;
+    switch (code) {
+      case "needs_reauth": return "A Supabase kapcsolat lejárt. Csatlakoztasd újra a claude.ai Beállítások → Connectors menüben, aztán nyomd meg a Frissítést.";
+      case "server_not_connected": case "selection_required": return "Ehhez az oldalhoz a Supabase connector kell. Add hozzá a claude.ai Beállítások → Connectors menüben.";
+      case "not_in_manifest": case "consent_required": return "Az oldal nem kapott engedélyt a Supabase eléréséhez. Az oldal Permissions menüjében engedélyezheted.";
+      case "approval_required": return "A lekérdezéshez jóváhagyás kell. Nyomd meg a Frissítést, és engedélyezd.";
+      case "blocked_by_policy": return "A szervezeted szabályai tiltják ezt a lekérdezést.";
+      case "server_unavailable": return "A Supabase most nem válaszol. Próbáld újra pár perc múlva.";
+      case "tool_error": return "Az adatbázis hibát adott: " + (e.message || "ismeretlen hiba");
+      default: return "Nem sikerült betölteni az adatokat" + (e && e.message ? ": " + e.message : ".");
+    }
+  }
+  function pageMsg(text, isErr) { const m = $("pagemsg"); if (!text) { m.hidden = true; return; } m.className = "msg" + (isErr ? " err" : ""); m.textContent = text; m.hidden = false; }
+
+  const LOAD_SQL = `
+select json_build_object(
+ 'videos', (select coalesce(json_agg(t), '[]'::json) from (
+    select * from tiktok_watch.video_scores order by last_snapshot desc limit 400) t),
+ 'history', (select coalesce(json_object_agg(video_id, pts), '{}'::json) from (
+    select s.video_id, json_agg(json_build_array(extract(epoch from s.taken_at)::bigint, s.views) order by s.taken_at) pts
+    from tiktok_watch.snapshots s join tiktok_watch.videos v using (video_id)
+    where v.status = 'tracking' or v.last_checked > now() - interval '3 days'
+    group by s.video_id) h),
+ 'runs', (select coalesce(json_agg(r), '[]'::json) from (
+    select job, started_at, finished_at, ok, stats, error from tiktok_watch.runs order by started_at desc limit 12) r),
+ 'settings', (select coalesce(json_object_agg(key, value), '{}'::json) from tiktok_watch.settings)
+) as data`;
+
+  async function load() {
+    if (!mcp || loading) return;
+    loading = true; $("refresh").disabled = true; $("refresh").textContent = "Betöltés…";
+    try {
+      let rows;
+      try { rows = await sql(LOAD_SQL); }
+      catch (e) { if (e && e.retryable) { await new Promise(r => setTimeout(r, (e.retryAfterMs || 1500) + Math.random()*1000)); rows = await sql(LOAD_SQL); } else throw e; }
+      state = rows[0].data;
+      pageMsg(null);
+      renderAll();
+    } catch (e) {
+      pageMsg(errorText(e), true);
+      if (!state.videos.length) $("list").replaceChildren(el("div", {class:"empty"}, el("b", {}, "Nincs adat"), "Az adatok betöltése nem sikerült, lásd a hibaüzenetet fent."));
+      $("status").replaceChildren(el("span", {class:"chip"}, el("span", {class:"dot err"}), "Nincs kapcsolat az adatbázissal"));
+    } finally {
+      loading = false; $("refresh").disabled = false; $("refresh").textContent = "Frissítés";
+    }
+  }
+
+  // ---- rendering ----
+  function renderAll() { renderStatus(); renderTiles(); renderList(); renderRuns(); fillSettings(state.settings); }
+
+  function lastRun(job) { return state.runs.find(r => r.job === job); }
+  function renderStatus() {
+    const chips = [];
+    for (const [job, label] of [["collect","Napi gyűjtés"],["track","6 órás mérés"]]) {
+      const r = lastRun(job);
+      let dot = "dot", txt = label + ": még nem futott";
+      if (r) {
+        if (!r.finished_at) { dot = "dot run"; txt = label + ": fut most (" + ago(r.started_at) + " indult)"; }
+        else if (r.ok) { dot = "dot ok"; txt = label + ": " + ago(r.finished_at); }
+        else { dot = "dot err"; txt = label + ": hiba, " + ago(r.finished_at); }
+      }
+      chips.push(el("span", {class:"chip", title: r && r.error ? r.error : null}, el("span", {class: dot}), txt));
+    }
+    $("status").replaceChildren(...chips);
+  }
+
+  function renderTiles() {
+    const tr = state.videos.filter(v => v.status === "tracking");
+    const accel = tr.filter(v => Number(v.acceleration) > 1);
+    const fresh = state.videos.filter(v => { const h = history(v.video_id); return h.length && (Date.now()/1000 - h[0][0]) < 86400; });
+    const top = Math.max(0, ...tr.map(v => Number(v.recent_views_per_hour) || 0));
+    const vals = [nf(tr.length), nf(accel.length), nf(fresh.length), tr.length ? short(top) : "–"];
+    [...$("tiles").querySelectorAll(".v")].forEach((n, i) => n.textContent = vals[i]);
+  }
+
+  function history(id) { return (state.history && state.history[id]) || []; }
+
+  function sparkline(points, w, h, pad, big) {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", `0 0 ${w} ${h}`); svg.setAttribute("preserveAspectRatio", "none");
+    svg.setAttribute("class", big ? "" : "spark"); svg.setAttribute("role", "img");
+    if (points.length < 2) {
+      const t = document.createElementNS(ns, "text");
+      t.setAttribute("x", w/2); t.setAttribute("y", h/2 + 4); t.setAttribute("text-anchor", "middle");
+      t.setAttribute("fill", "var(--muted)"); t.setAttribute("font-size", big ? "13" : "10"); t.textContent = "1 mérés eddig";
+      svg.append(t); return svg;
+    }
+    const xs = points.map(p => p[0]), ys = points.map(p => p[1]);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    const L = big ? 56 : pad, R = pad, T = pad, B = big ? 22 : pad;
+    const sx = x => L + (x - x0) / Math.max(x1 - x0, 1) * (w - L - R);
+    const sy = y => T + (1 - (y - y0) / Math.max(y1 - y0, 1)) * (h - T - B);
+    const line = points.map((p, i) => (i ? "L" : "M") + sx(p[0]).toFixed(1) + " " + sy(p[1]).toFixed(1)).join(" ");
+    if (big) {
+      for (const v of [y0, (y0 + y1) / 2, y1]) {
+        const g = document.createElementNS(ns, "line");
+        g.setAttribute("x1", L); g.setAttribute("x2", w - R); g.setAttribute("y1", sy(v)); g.setAttribute("y2", sy(v));
+        g.setAttribute("stroke", "var(--line)"); g.setAttribute("stroke-width", "1"); svg.append(g);
+        const t = document.createElementNS(ns, "text");
+        t.setAttribute("x", L - 6); t.setAttribute("y", sy(v) + 4); t.setAttribute("text-anchor", "end");
+        t.setAttribute("fill", "var(--muted)"); t.setAttribute("font-size", "11"); t.textContent = short(v); svg.append(t);
+      }
+      for (const [x, anchor] of [[x0, "start"], [x1, "end"]]) {
+        const t = document.createElementNS(ns, "text");
+        t.setAttribute("x", sx(x)); t.setAttribute("y", h - 6); t.setAttribute("text-anchor", anchor);
+        t.setAttribute("fill", "var(--muted)"); t.setAttribute("font-size", "11");
+        t.textContent = new Date(x * 1000).toLocaleString("hu-HU", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+        svg.append(t);
+      }
+    }
+    const area = document.createElementNS(ns, "path");
+    area.setAttribute("d", line + ` L${sx(x1).toFixed(1)} ${h - B} L${sx(x0).toFixed(1)} ${h - B} Z`);
+    area.setAttribute("fill", "var(--chart-fill)"); area.setAttribute("stroke", "none");
+    const path = document.createElementNS(ns, "path");
+    path.setAttribute("d", line); path.setAttribute("fill", "none"); path.setAttribute("stroke", "var(--chart)");
+    path.setAttribute("stroke-width", big ? "2" : "1.6"); path.setAttribute("vector-effect", "non-scaling-stroke");
+    const end = document.createElementNS(ns, "circle");
+    end.setAttribute("cx", sx(x1)); end.setAttribute("cy", sy(points[points.length - 1][1])); end.setAttribute("r", big ? 4 : 2.5);
+    end.setAttribute("fill", "var(--chart)");
+    svg.append(area, path, end);
+    svg.setAttribute("aria-label", `Nézések: ${nf(ys[0])} → ${nf(ys[ys.length - 1])}`);
+    return svg;
+  }
+
+  function accelPill(v) {
+    if (v.status !== "tracking") return el("span", {class:"pill off"}, v.status === "expired" ? "lejárt" : "kiesett");
+    const a = Number(v.acceleration);
+    if (v.acceleration == null) return el("span", {class:"pill"}, "új");
+    if (a > 1.2) return el("span", {class:"pill hot"}, "gyorsul ×" + a.toFixed(1).replace(".", ","));
+    if (a >= .8) return el("span", {class:"pill"}, "egyenletes");
+    return el("span", {class:"pill off"}, "lassul");
+  }
+
+  function renderList() {
+    const sort = $("sort").value, show = $("show").value;
+    let rows = state.videos.slice();
+    if (show === "tracking") rows = rows.filter(v => v.status === "tracking");
+    if (show === "accel") rows = rows.filter(v => v.status === "tracking" && Number(v.acceleration) > 1);
+    const key = (v) => sort === "newest" ? new Date(v.created_at_tt).getTime() : Number(v[sort]);
+    rows.sort((a, b) => { const x = key(a), y = key(b); return (isNaN(y) ? -Infinity : y) - (isNaN(x) ? -Infinity : x); });
+    if (!rows.length) {
+      const none = !state.videos.length;
+      $("list").replaceChildren(el("div", {class:"empty"},
+        el("b", {}, none ? "Még nincs videó" : "Nincs a szűrésnek megfelelő videó"),
+        none ? "Az első napi gyűjtés után itt jelennek meg a friss, gyorsan növő termékes videók." : "Válts a „Mutasd” szűrőn, vagy várd meg a következő mérést."));
+      return;
+    }
+    $("list").replaceChildren(...rows.map(rowEl));
+  }
+
+  function rowEl(v) {
+    const hot = v.status === "tracking" && Number(v.acceleration) > 1.2;
+    const title = v.product_title || (v.description || "").replace(/#\w+/g, "").trim() || "Videó leírás nélkül";
+    const row = el("div", {class: "row" + (hot ? " hot" : "")},
+      el("div", {style:"min-width:0"},
+        el("div", {class:"title"}, title.length > 110 ? title.slice(0, 110) + "…" : title),
+        el("div", {class:"meta"}, accelPill(v), " ", "@" + (v.author || "?"), " · ", Math.round(v.age_hours) + " órás · ",
+          el("a", {href: v.url, target: "_blank", rel: "noopener"}, "Megnyitás"), " · ",
+          el("a", {href: "#", onclick: (e) => { e.preventDefault(); openId = openId === v.video_id ? null : v.video_id; renderList(); }}, openId === v.video_id ? "Bezárás" : "Grafikon"))),
+      sparkline(history(v.video_id), 140, 40, 3, false),
+      el("div", {class:"metrics"},
+        metric(short(v.recent_views_per_hour), "nézés/óra"),
+        metric(short(v.views), "nézés"),
+        metric(v.shares_per_1k == null ? "–" : String(v.shares_per_1k).replace(".", ","), "megoszt./1e"),
+        metric(v.saves_per_1k == null ? "–" : String(v.saves_per_1k).replace(".", ","), "mentés/1e")));
+    if (openId === v.video_id) {
+      const box = el("div", {class:"detail"},
+        el("div", {class:"desc"}, v.description || ""),
+        el("div", {class:"note"}, `Átlag a feltöltés óta: ${nf(v.avg_views_per_hour)} nézés/óra · Utolsó mérés óta: ${v.growth_pct_last_check == null ? "–" : String(v.growth_pct_last_check).replace(".", ",") + "%"} · Lájk: ${nf(v.likes)} · Komment: ${nf(v.comments)} · Forrás: ${v.source || "–"}`));
+      box.append(sparkline(history(v.video_id), 900, 200, 8, true));
+      row.append(box);
+    }
+    return row;
+  }
+  function metric(val, label) { return el("div", {class:"metric"}, el("b", {}, val), el("span", {}, label)); }
+
+  function renderRuns() {
+    if (!state.runs.length) { $("runs").replaceChildren(el("p", {class:"note"}, "Még nincs futás. Az első GitHub futás után itt látod az eredményt.")); return; }
+    const head = el("tr", {}, ...["Feladat","Indult","Állapot","Átnézett","Új / mért","Hibák"].map(t => el("th", {}, t)));
+    const body = state.runs.map(r => {
+      const s = r.stats || {};
+      const st = !r.finished_at ? "fut" : r.ok ? "rendben" : "hiba";
+      return el("tr", {title: r.error || null},
+        el("td", {}, r.job === "collect" ? "Gyűjtés" : "Mérés"),
+        el("td", {}, new Date(r.started_at).toLocaleString("hu-HU", {month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"})),
+        el("td", {}, el("span", {class: "pill" + (st === "hiba" ? " hot" : st === "fut" ? " off" : "")}, st)),
+        el("td", {class:"num"}, r.job === "collect" ? nf(s.seen || 0) : nf((s.tracking||0)+(s.dropped||0)+(s.expired||0)+(s.failed||0))),
+        el("td", {class:"num"}, r.job === "collect" ? nf(s.ok || 0) : nf(s.tracking || 0)),
+        el("td", {class:"num"}, nf((s.feed_errors || 0) + (s.failed || 0))));
+    });
+    $("runs").replaceChildren(el("table", {}, el("thead", {}, head), el("tbody", {}, ...body)));
+  }
+
+  // ---- settings ----
+  function fillSettings(s) {
+    if (!s) return;
+    for (const k of KEYS_INT) if (s[k] != null) $("s-" + k).value = s[k];
+    for (const k of KEYS_BOOL) if (s[k] != null) $("s-" + k).checked = !!s[k];
+    tags = Array.isArray(s.hashtags) ? s.hashtags.slice() : [];
+    renderTags();
+  }
+  const cleanTag = (t) => String(t).toLowerCase().replace(/^#/, "").replace(/[^a-z0-9_]/g, "");
+  function renderTags() {
+    $("tags").replaceChildren(...tags.map((t, i) => el("span", {class:"tag"}, "#" + t,
+      el("button", {type:"button", "aria-label": "#" + t + " törlése", onclick: () => { tags.splice(i, 1); renderTags(); }}, "×"))));
+    if (!tags.length) $("tags").append(el("span", {class:"note"}, "Nincs hashtag. Adj hozzá legalább egyet."));
+  }
+  function addTag() {
+    const parts = $("tag-input").value.split(/[\s,]+/).map(cleanTag).filter(Boolean);
+    for (const p of parts) if (!tags.includes(p)) tags.push(p);
+    $("tag-input").value = ""; renderTags();
+  }
+  $("tag-add").addEventListener("click", addTag);
+  $("tag-input").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addTag(); } });
+
+  function saveMsg(text, isErr) { const m = $("savemsg"); m.className = "msg" + (isErr ? " err" : ""); m.textContent = text; m.hidden = false; }
+
+  $("settings-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!mcp) { saveMsg("Az oldal nem éri el a Supabase-t, ezért most nem tud menteni.", true); return; }
+    const vals = { hashtags: tags.map(cleanTag).filter(Boolean) };
+    if (!vals.hashtags.length) { saveMsg("Legalább egy hashtag kell.", true); return; }
+    for (const k of KEYS_INT) {
+      const n = Number($("s-" + k).value), [lo, hi] = LIMITS[k];
+      if (!Number.isFinite(n) || n < lo || n > hi || !Number.isInteger(n)) { saveMsg(`Hibás érték: „${$("s-" + k).closest(".field").querySelector("label").textContent}”. ${lo} és ${nf(hi)} közötti egész szám kell.`, true); $("s-" + k).focus(); return; }
+      vals[k] = n;
+    }
+    for (const k of KEYS_BOOL) vals[k] = $("s-" + k).checked;
+    const rows = Object.entries(vals).map(([k, v]) => `('${k}', $j$${JSON.stringify(v)}$j$::jsonb, now())`).join(",\n");
+    const q = `insert into tiktok_watch.settings (key, value, updated_at) values\n${rows}\non conflict (key) do update set value = excluded.value, updated_at = now()\nreturning key`;
+    $("save").disabled = true; $("save").textContent = "Mentés…";
+    try {
+      await sql(q);
+      state.settings = Object.assign({}, state.settings, vals);
+      saveMsg("Mentve. A következő gyűjtésnél és mérésnél már ezekkel fut.", false);
+    } catch (err) {
+      saveMsg(errorText(err) + " Ellenőrizd a Frissítéssel, hogy a mentés átment-e, mielőtt újra próbálod.", true);
+    } finally { $("save").disabled = false; $("save").textContent = "Beállítások mentése"; }
+  });
+
+  // ---- tabs & controls ----
+  function selectTab(name) {
+    for (const t of ["videos", "settings"]) { $("tab-" + t).setAttribute("aria-selected", String(t === name)); $("view-" + t).hidden = t !== name; }
+    try { localStorage.setItem("radar-tab", name); } catch (_) {}
+  }
+  $("tab-videos").addEventListener("click", () => selectTab("videos"));
+  $("tab-settings").addEventListener("click", () => selectTab("settings"));
+  for (const id of ["sort", "show"]) $(id).addEventListener("change", () => { try { localStorage.setItem("radar-" + id, $(id).value); } catch (_) {} renderList(); });
+  try { for (const id of ["sort", "show"]) { const v = localStorage.getItem("radar-" + id); if (v) $(id).value = v; } const t = localStorage.getItem("radar-tab"); if (t === "settings" || location.hash === "#beallitasok") selectTab("settings"); } catch (_) {}
+  $("refresh").addEventListener("click", load);
+  renderTags();
+
+  // ---- boot ----
+  if (!window.claude || !window.claude.use) {
+    pageMsg("Ez az oldal a claude.ai-ban megnyitva tudja elérni az adatbázist.", true);
+    $("status").replaceChildren(el("span", {class:"chip"}, el("span", {class:"dot err"}), "Nincs kapcsolat"));
+    return;
+  }
+  window.claude.use("mcp").then((ns) => {
+    mcp = ns;
+    if (!mcp) {
+      pageMsg("Ebben a nézetben az oldal nem éri el a Supabase connectort. Nyisd meg a claude.ai-ban bejelentkezve.", true);
+      $("status").replaceChildren(el("span", {class:"chip"}, el("span", {class:"dot err"}), "Nincs kapcsolat"));
+      return;
+    }
+    load();
+  });
+})();
+</script>
