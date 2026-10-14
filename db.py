@@ -49,11 +49,11 @@ def add_snapshot(conn, video_id: str, views: int, likes: int, comments: int, sha
         )
 
 
-def tracking_videos(conn) -> list[tuple[str, str, datetime, int]]:
+def tracking_videos(conn) -> list[tuple[str, str, datetime, int, bool]]:
     with conn.cursor() as cur:
         cur.execute(
-            "select video_id, url, created_at_tt, fail_count from tiktok_watch.videos"
-            " where status = 'tracking' order by first_seen"
+            "select video_id, url, created_at_tt, fail_count, starred from tiktok_watch.videos"
+            " where status = 'tracking' order by starred desc, first_seen"
         )
         return cur.fetchall()
 

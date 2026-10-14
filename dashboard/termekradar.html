@@ -17,6 +17,7 @@
   --bad: #b42318;
   --bad-soft: #fce8e6;
   --chart: #0f7c78;
+  --star: #b7791f;
   --chart-fill: rgba(15, 124, 120, .12);
   --f-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
   --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
@@ -27,14 +28,14 @@
     --bg: #0e1418; --surface: #151d23; --fg: #e5ebef; --muted: #93a1ad; --line: #26323b;
     --accent: #3cc2bb; --accent-soft: #123331; --hot: #fb8a52; --hot-soft: #3a1f12;
     --good: #5bc27d; --bad: #f2776b; --bad-soft: #3b1714;
-    --chart: #3cc2bb; --chart-fill: rgba(60, 194, 187, .14); color-scheme: dark;
+    --star: #f2b84b; --chart: #3cc2bb; --chart-fill: rgba(60, 194, 187, .14); color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #0e1418; --surface: #151d23; --fg: #e5ebef; --muted: #93a1ad; --line: #26323b;
   --accent: #3cc2bb; --accent-soft: #123331; --hot: #fb8a52; --hot-soft: #3a1f12;
   --good: #5bc27d; --bad: #f2776b; --bad-soft: #3b1714;
-  --chart: #3cc2bb; --chart-fill: rgba(60, 194, 187, .14); color-scheme: dark;
+  --star: #f2b84b; --chart: #3cc2bb; --chart-fill: rgba(60, 194, 187, .14); color-scheme: dark;
 }
 * { box-sizing: border-box; }
 body { background: var(--bg); color: var(--fg); font-family: var(--f-body); font-size: 15px; line-height: 1.5; }
@@ -72,6 +73,12 @@ select, input[type="number"], input[type="text"] { font: inherit; color: var(--f
 .list { display: grid; gap: 8px; }
 .row { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; grid-template-columns: minmax(0, 1fr) 140px auto; gap: 14px; align-items: center; }
 .row.hot { border-left: 3px solid var(--hot); }
+.row.starred { border-left: 3px solid var(--star); }
+.titleline { display: flex; gap: 8px; align-items: flex-start; }
+.star { border: 0; background: none; padding: 0 2px; font-size: 20px; line-height: 1.1; color: var(--muted); flex: none; }
+.star:hover { color: var(--star); }
+.star[aria-pressed="true"] { color: var(--star); }
+.star:disabled { opacity: .5; cursor: default; }
 @media (max-width: 720px) { .row { grid-template-columns: minmax(0, 1fr) 96px; } .row .metrics { grid-column: 1 / -1; } }
 .row .title { font-weight: 600; overflow-wrap: anywhere; }
 .row .meta { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
@@ -156,6 +163,7 @@ td.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
         <select id="show">
           <option value="tracking">Csak a követetteket</option>
           <option value="accel">Csak a gyorsulókat</option>
+          <option value="starred">Csak a csillagozottakat</option>
           <option value="all">Mindet (kiesettekkel együtt)</option>
         </select>
       </label>
@@ -263,11 +271,11 @@ td.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
   const LOAD_SQL = `
 select json_build_object(
  'videos', (select coalesce(json_agg(t), '[]'::json) from (
-    select * from tiktok_watch.video_scores order by last_snapshot desc limit 400) t),
+    select * from tiktok_watch.video_scores order by starred desc, last_snapshot desc limit 400) t),
  'history', (select coalesce(json_object_agg(video_id, pts), '{}'::json) from (
     select s.video_id, json_agg(json_build_array(extract(epoch from s.taken_at)::bigint, s.views) order by s.taken_at) pts
     from tiktok_watch.snapshots s join tiktok_watch.videos v using (video_id)
-    where v.status = 'tracking' or v.last_checked > now() - interval '3 days'
+    where v.status = 'tracking' or v.starred or v.last_checked > now() - interval '3 days'
     group by s.video_id) h),
  'runs', (select coalesce(json_agg(r), '[]'::json) from (
     select job, started_at, finished_at, ok, stats, error from tiktok_watch.runs order by started_at desc limit 12) r),
@@ -385,13 +393,14 @@ select json_build_object(
     let rows = state.videos.slice();
     if (show === "tracking") rows = rows.filter(v => v.status === "tracking");
     if (show === "accel") rows = rows.filter(v => v.status === "tracking" && Number(v.acceleration) > 1);
+    if (show === "starred") rows = rows.filter(v => v.starred);
     const key = (v) => sort === "newest" ? new Date(v.created_at_tt).getTime() : Number(v[sort]);
     rows.sort((a, b) => { const x = key(a), y = key(b); return (isNaN(y) ? -Infinity : y) - (isNaN(x) ? -Infinity : x); });
     if (!rows.length) {
       const none = !state.videos.length;
       $("list").replaceChildren(el("div", {class:"empty"},
         el("b", {}, none ? "Még nincs videó" : "Nincs a szűrésnek megfelelő videó"),
-        none ? "Az első napi gyűjtés után itt jelennek meg a friss, gyorsan növő termékes videók." : "Válts a „Mutasd” szűrőn, vagy várd meg a következő mérést."));
+        none ? "Az első napi gyűjtés után itt jelennek meg a friss, gyorsan növő termékes videók." : show === "starred" ? "Még nem csillagoztál videót. A videók címe előtti ☆ jellel jelölheted meg, ami tetszik." : "Válts a „Mutasd” szűrőn, vagy várd meg a következő mérést."));
       return;
     }
     $("list").replaceChildren(...rows.map(rowEl));
@@ -400,9 +409,13 @@ select json_build_object(
   function rowEl(v) {
     const hot = v.status === "tracking" && Number(v.acceleration) > 1.2;
     const title = v.product_title || (v.description || "").replace(/#\w+/g, "").trim() || "Videó leírás nélkül";
-    const row = el("div", {class: "row" + (hot ? " hot" : "")},
+    const row = el("div", {class: "row" + (v.starred ? " starred" : hot ? " hot" : "")},
       el("div", {style:"min-width:0"},
-        el("div", {class:"title"}, title.length > 110 ? title.slice(0, 110) + "…" : title),
+        el("div", {class:"titleline"},
+          el("button", {type:"button", class:"star", "aria-pressed": String(!!v.starred),
+            "aria-label": v.starred ? "Csillag levétele" : "Csillagozás", title: v.starred ? "Csillag levétele" : "Csillagozás",
+            onclick: (e) => toggleStar(v, e.currentTarget)}, v.starred ? "★" : "☆"),
+          el("div", {class:"title"}, title.length > 110 ? title.slice(0, 110) + "…" : title)),
         el("div", {class:"meta"}, accelPill(v), " ", "@" + (v.author || "?"), " · ", Math.round(v.age_hours) + " órás · ",
           el("a", {href: v.url, target: "_blank", rel: "noopener"}, "Megnyitás"), " · ",
           el("a", {href: "#", onclick: (e) => { e.preventDefault(); openId = openId === v.video_id ? null : v.video_id; renderList(); }}, openId === v.video_id ? "Bezárás" : "Grafikon"))),
@@ -420,6 +433,25 @@ select json_build_object(
       row.append(box);
     }
     return row;
+  }
+  async function toggleStar(v, btn) {
+    if (!mcp || !/^\d+$/.test(String(v.video_id))) { pageMsg("A csillagozás most nem menthető, mert az oldal nem éri el az adatbázist.", true); return; }
+    const next = !v.starred;
+    v.starred = next; renderList(); renderTiles();
+    const q = next
+      ? `update tiktok_watch.videos set starred = true, starred_at = now(),
+           status = case when status = 'dropped' and created_at_tt > now() - make_interval(days => coalesce((select (value)::text::int from tiktok_watch.settings where key = 'max_age_days'), 7)) then 'tracking' else status end
+         where video_id = '${v.video_id}' returning video_id, status`
+      : `update tiktok_watch.videos set starred = false, starred_at = null where video_id = '${v.video_id}' returning video_id, status`;
+    try {
+      const rows = await sql(q);
+      if (rows[0] && rows[0].status) v.status = rows[0].status;
+      pageMsg(null);
+    } catch (err) {
+      v.starred = !next;
+      pageMsg("Nem sikerült menteni a csillagot. " + errorText(err), true);
+    }
+    renderList(); renderTiles();
   }
   function metric(val, label) { return el("div", {class:"metric"}, el("b", {}, val), el("span", {}, label)); }
 
