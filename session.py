@@ -20,18 +20,21 @@ NAV_TIMEOUT_MS = 90_000
 
 
 async def _patient_page(context):
-    """Open the start page without waiting for every resource.
+    """A stealth page with a longer timeout, left blank on purpose.
 
-    TikTokApi's own first navigation waits for the full 'load' event with a fixed 30 s limit,
-    which a slow proxy exit IP can miss. The page only needs its scripts and cookies, so wait
-    for the HTML (domcontentloaded) with a longer limit instead.
+    TikTokApi's own first navigation uses Playwright's fixed 30 s limit, which a slow proxy exit
+    IP can miss. Returning a blank page makes TikTokApi do the navigation itself (so it still
+    captures the request headers it needs), but with this page's 90 s limit.
     """
     from TikTokApi.stealth import stealth_async
     page = await context.new_page()
     await stealth_async(page)
     page.set_default_navigation_timeout(NAV_TIMEOUT_MS)
     page.set_default_timeout(NAV_TIMEOUT_MS)
-    await page.goto(START_URL, wait_until="domcontentloaded")
+    # With a page_factory TikTokApi only blocks images after its first navigation; block them
+    # from the start so the first load stays light on proxy bandwidth.
+    await page.route("**/*", lambda route, request: (
+        route.abort() if request.resource_type in SAVE_BANDWIDTH else route.continue_()))
     return page
 
 
@@ -89,6 +92,10 @@ async def tiktok_session(headless: bool | None = None, browser: str | None = Non
                     context_options=context_options,
                     page_factory=_patient_page,
                 )
+                # TikTokApi can log a failed start and still return a session without request
+                # headers; every call would then fail. Treat that as a failed start and retry.
+                if not api.sessions or not all(getattr(x, "headers", None) for x in api.sessions):
+                    raise RuntimeError("session started without request headers")
                 started = True
                 yield api, req_proxy
             return
