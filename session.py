@@ -63,11 +63,18 @@ async def tiktok_session(headless: bool | None = None, browser: str | None = Non
         if ua:
             context_options["user_agent"] = ua
     log.info("Session: browser=%s headless=%s ms_token=%s proxy=%s", browser, headless, bool(ms_token), bool(pw_proxy))
-    # Starting the session loads tiktok.com through the proxy; a slow exit IP can time out.
-    # Retry with a fresh browser (and, with a rotating proxy, a fresh IP) before giving up.
-    attempts = 5
-    for attempt in range(1, attempts + 1):
+    # Starting the session loads tiktok.com through the proxy; a rotating proxy hands every
+    # connection a different home IP and a run of bad ones can stall the page. Retry with a fresh
+    # browser, and as a last resort start once without the proxy (GitHub's own US IP also works).
+    plan = [pw_proxy] * 3 + ([None] if pw_proxy else [])
+    if not pw_proxy:
+        plan = [None] * 3
+    attempts = len(plan)
+    for attempt, proxy in enumerate(plan, start=1):
         started = False
+        if attempt > 1 and proxy is None and pw_proxy:
+            log.warning("Proxy kept failing; trying once without the proxy.")
+            req_proxy = None
         try:
             async with TikTokApi() as api:
                 await api.create_sessions(
@@ -75,7 +82,7 @@ async def tiktok_session(headless: bool | None = None, browser: str | None = Non
                     num_sessions=1,
                     sleep_after=4,
                     headless=headless,
-                    proxies=[pw_proxy] if pw_proxy else None,
+                    proxies=[proxy] if proxy else None,
                     browser=browser,
                     suppress_resource_load_types=SAVE_BANDWIDTH,
                     timeout=NAV_TIMEOUT_MS,
