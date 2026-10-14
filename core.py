@@ -49,12 +49,21 @@ class Config:
     product_check_hours: int = _env_int("PRODUCT_CHECK_HOURS", 20)
     min_product_price: int = _env_int("MIN_PRODUCT_PRICE", 0)
 
+    # TikTok Shop category scan (shop.py)
+    shop_categories: list[str] = field(default_factory=list)
+    shop_min_price: int = _env_int("SHOP_MIN_PRICE", 30)
+    shop_max_price: int = _env_int("SHOP_MAX_PRICE", 70)
+    shop_fetches_per_category: int = _env_int("SHOP_FETCHES_PER_CATEGORY", 3)
+    shop_track_min_sold: int = _env_int("SHOP_TRACK_MIN_SOLD", 100)
+
     # Keys the dashboard may change, with their expected type
     EDITABLE = {
         "hashtags": list, "videos_per_hashtag": int, "include_trending": bool, "trending_count": int,
         "max_age_days": int, "min_views": int, "min_avg_views_per_hour": int,
         "require_product_signal": bool, "require_shop_product": bool, "drop_below_views_per_hour": int, "min_snapshots_before_drop": int,
         "product_check_hours": int, "min_product_price": int,
+        "shop_categories": "categories", "shop_min_price": int, "shop_max_price": int,
+        "shop_fetches_per_category": int, "shop_track_min_sold": int,
     }
 
     def apply_overrides(self, values: dict) -> list[str]:
@@ -68,6 +77,11 @@ class Config:
                 setattr(self, key, value)
             elif kind is int and isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
                 setattr(self, key, int(value))
+            elif kind == "categories" and isinstance(value, list):
+                cats = [str(x).strip().strip("/") for x in value if re.fullmatch(r"[a-z0-9\-]+/\d+", str(x).strip().strip("/"))]
+                if not cats:
+                    continue
+                setattr(self, key, cats)
             elif kind is list and isinstance(value, list):
                 tags = [re.sub(r"[^a-z0-9_]", "", str(t).lower().lstrip("#")) for t in value]
                 tags = [t for t in tags if t]

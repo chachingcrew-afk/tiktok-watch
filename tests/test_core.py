@@ -186,3 +186,35 @@ def test_require_shop_product():
     assert passes_collect_filter(shop, cfg, NOW) == (True, "ok")
     cfg.require_shop_product = False
     assert passes_collect_filter(no_shop, cfg, NOW) == (True, "ok")
+
+
+def test_parse_category_page():
+    import json as _j
+    from shop import parse_category_page, category_name, in_range
+    page = {"component_data": {"categoryInfo": {"category_name": "Kitchen Appliances"},
+            "self": {"category_id": "844168", "category_name": "Kitchen Appliances"},
+            "categoryProductsData": {"productList": [
+        {"product_id": "1732473869581718155", "title": "Ice Cream Maker & Scrapers",
+         "image": {"url_list": ["https://img.example/a.webp"]},
+         "product_price_info": {"sale_price_decimal": "39.2", "raw_origin_price_decimal": "59.99"},
+         "rate_info": {"score": 4.2, "review_count": "75"}, "sold_info": {"sold_count": 333},
+         "seller_info": {"seller_id": "7494353230127007371", "shop_name": "Buifast"},
+         "seo_url": {"canonical_url": "https://shop.tiktok.com/us/pdp/ice-cream/1732473869581718155"}},
+        {"product_id": "1731638169038590399", "title": "Cheap Peeler",
+         "product_price_info": {"sale_price_decimal": "9.2"}, "sold_info": {"sold_count": 12}}]}}}
+    html = '<script>' + _j.dumps({"x": _j.dumps(page)}) + "</script>"
+    items = parse_category_page(html)
+    assert [i["product_id"] for i in items] == ["1732473869581718155", "1731638169038590399"]
+    a = items[0]
+    assert a["title"] == "Ice Cream Maker & Scrapers" and a["price"] == 39.2 and a["price_original"] == 59.99
+    assert a["sold"] == 333 and a["rating"] == 4.2 and a["reviews"] == 75 and a["shop_name"] == "Buifast"
+    assert a["url"].endswith("/1732473869581718155") and a["image"] == "https://img.example/a.webp"
+    assert category_name(html) == "Kitchen Appliances"
+    cfg = Config(); cfg.shop_min_price, cfg.shop_max_price = 30, 70
+    assert in_range(items[0], cfg) and not in_range(items[1], cfg)
+
+
+def test_shop_categories_setting():
+    cfg = Config()
+    cfg.apply_overrides({"shop_categories": ["kitchen-appliances/844168", "bad cat", "/fitness/835336/"], "shop_min_price": 30})
+    assert cfg.shop_categories == ["kitchen-appliances/844168", "fitness/835336"] and cfg.shop_min_price == 30

@@ -163,3 +163,68 @@ def hide_cheap_product(conn, product_id: str) -> int:
             (product_id,),
         )
         return cur.rowcount
+
+
+# ---------- TikTok Shop category scan ----------
+
+def upsert_shop_product(conn, p: dict) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into tiktok_watch.shop_products
+              (product_id, title, url, image, category_id, category_name, shop_name, seller_id,
+               price, price_original, rating, reviews, last_sold, first_seen, last_seen, last_checked)
+            values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now(), now(), now())
+            on conflict (product_id) do update set
+              title = coalesce(excluded.title, tiktok_watch.shop_products.title),
+              url = coalesce(excluded.url, tiktok_watch.shop_products.url),
+              image = coalesce(excluded.image, tiktok_watch.shop_products.image),
+              shop_name = coalesce(excluded.shop_name, tiktok_watch.shop_products.shop_name),
+              price = excluded.price,
+              price_original = excluded.price_original,
+              rating = coalesce(excluded.rating, tiktok_watch.shop_products.rating),
+              reviews = coalesce(excluded.reviews, tiktok_watch.shop_products.reviews),
+              last_sold = coalesce(excluded.last_sold, tiktok_watch.shop_products.last_sold),
+              last_seen = now(), last_checked = now()
+            """,
+            (p["product_id"], p.get("title"), p.get("url"), p.get("image"), p.get("category_id"),
+             p.get("category_name"), p.get("shop_name"), p.get("seller_id"), p.get("price"),
+             p.get("price_original"), p.get("rating"), p.get("reviews"), p.get("sold")),
+        )
+
+
+def add_product_snapshot(conn, product_id: str, sold, price_min, price_max) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "insert into tiktok_watch.product_snapshots (product_id, sold, price_min, price_max) values (%s,%s,%s,%s)",
+            (product_id, sold, price_min, price_max),
+        )
+
+
+def shop_products_to_refresh(conn, min_sold: int) -> list[tuple[str, str]]:
+    """Promising products (sold enough, seen in the last 2 weeks) not checked in the last 20 hours."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "select product_id, url from tiktok_watch.shop_products"
+            " where not hidden and url is not null and (coalesce(last_sold, 0) >= %s or starred)"
+            "   and last_seen > now() - interval '14 days'"
+            "   and (last_checked is null or last_checked < now() - interval '20 hours')"
+            " order by starred desc, last_sold desc nulls last",
+            (min_sold,),
+        )
+        return cur.fetchall()
+
+
+def touch_shop_product(conn, product_id: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute("update tiktok_watch.shop_products set last_checked = now() where product_id = %s", (product_id,))
+
+
+def save_shop_product_page(conn, product_id: str, info: dict) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "update tiktok_watch.shop_products set last_checked = now(),"
+            " last_sold = coalesce(%s, last_sold), price = coalesce(%s, price),"
+            " price_original = coalesce(%s, price_original) where product_id = %s",
+            (info.get("sold"), info.get("price_min"), info.get("price_original"), product_id),
+        )
