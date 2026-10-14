@@ -200,7 +200,7 @@ def test_parse_category_page():
          "rate_info": {"score": 4.2, "review_count": "75"}, "sold_info": {"sold_count": 333},
          "seller_info": {"seller_id": "7494353230127007371", "shop_name": "Buifast"},
          "seo_url": {"canonical_url": "https://shop.tiktok.com/us/pdp/ice-cream/1732473869581718155"}},
-        {"product_id": "1731638169038590399", "title": "Cheap Peeler",
+        {"product_id": "1731638169038590399", "title": "Cheap 10.5\" Peeler",
          "product_price_info": {"sale_price_decimal": "9.2"}, "sold_info": {"sold_count": 12}}]}}}
     html = '<script>' + _j.dumps({"x": _j.dumps(page)}) + "</script>"
     items = parse_category_page(html)
@@ -212,6 +212,7 @@ def test_parse_category_page():
     assert category_name(html) == "Kitchen Appliances"
     cfg = Config(); cfg.shop_min_price, cfg.shop_max_price = 30, 70
     assert in_range(items[0], cfg) and not in_range(items[1], cfg)
+    assert items[1]["title"] == 'Cheap 10.5" Peeler'
 
 
 def test_shop_categories_setting():

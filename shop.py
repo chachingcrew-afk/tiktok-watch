@@ -66,7 +66,10 @@ def parse_category_page(html: str) -> list[dict]:
             continue
         end = starts[i + 1].start() if i + 1 < len(starts) else min(len(text), m.start() + 6000)
         chunk = text[m.start():end]
-        title = _f(r'"title":\s*"((?:[^"\\]|\\.)*)"', chunk)
+        # the page is un-escaped, so a quote inside the title (10.5" screen) is a bare quote;
+        # read up to the next known field instead of the next quote
+        title = _f(r'"title":\s*"(.*?)",\s*"(?:image|product_price_info|rate_info|sold_info|seller_info)"', chunk) \
+            or _f(r'"title":\s*"((?:[^"\\]|\\.)*)"', chunk)
         price = _num(_f(r'"sale_price_decimal":\s*"([\d.]+)"', chunk))
         if price is None:
             continue
