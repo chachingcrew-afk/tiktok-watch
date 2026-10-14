@@ -1,6 +1,7 @@
 """Shared TikTokApi session setup."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -44,16 +45,29 @@ async def tiktok_session(headless: bool | None = None, browser: str | None = Non
         if ua:
             context_options["user_agent"] = ua
     log.info("Session: browser=%s headless=%s ms_token=%s proxy=%s", browser, headless, bool(ms_token), bool(pw_proxy))
-    async with TikTokApi() as api:
-        await api.create_sessions(
-            ms_tokens=[ms_token] if ms_token else None,
-            num_sessions=1,
-            sleep_after=4,
-            headless=headless,
-            proxies=[pw_proxy] if pw_proxy else None,
-            browser=browser,
-            suppress_resource_load_types=SAVE_BANDWIDTH,
-            timeout=60000,
-            context_options=context_options,
-        )
-        yield api, req_proxy
+    # Starting the session loads tiktok.com through the proxy; a slow exit IP can time out.
+    # Retry with a fresh browser (and, with a rotating proxy, a fresh IP) before giving up.
+    attempts = 3
+    for attempt in range(1, attempts + 1):
+        started = False
+        try:
+            async with TikTokApi() as api:
+                await api.create_sessions(
+                    ms_tokens=[ms_token] if ms_token else None,
+                    num_sessions=1,
+                    sleep_after=4,
+                    headless=headless,
+                    proxies=[pw_proxy] if pw_proxy else None,
+                    browser=browser,
+                    suppress_resource_load_types=SAVE_BANDWIDTH,
+                    timeout=60000,
+                    context_options=context_options,
+                )
+                started = True
+                yield api, req_proxy
+            return
+        except Exception as e:
+            if started or attempt == attempts:
+                raise
+            log.warning("Session start failed (attempt %d/%d): %s. Retrying.", attempt, attempts, e)
+            await asyncio.sleep(10 * attempt)

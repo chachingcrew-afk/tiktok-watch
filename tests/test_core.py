@@ -101,3 +101,35 @@ def test_strip_signed_params():
     out = strip_signed_params(u)
     assert "msToken" not in out and "X-Bogus" not in out
     assert "aid=1988" in out and "challengeID=123" in out and "count=30" in out
+
+
+def test_parse_video_page():
+    import json as _json
+    import pytest
+    from fetch_video import UNIVERSAL, VideoUnavailable, parse_video_page
+    item = {"id": "7550000000000000001", "createTime": "1760400000", "author": {"uniqueId": "seller"},
+            "desc": "x", "stats": {"playCount": 1234}}
+    page = {"__DEFAULT_SCOPE__": {"webapp.video-detail": {"statusCode": 0, "itemInfo": {"itemStruct": item}}}}
+    html = f"<html>{UNIVERSAL}{_json.dumps(page)}</script></html>"
+    assert parse_video_page(html, item["id"])["stats"]["playCount"] == 1234
+    gone = {"__DEFAULT_SCOPE__": {"webapp.video-detail": {"statusCode": 10204}}}
+    with pytest.raises(VideoUnavailable):
+        parse_video_page(f"{UNIVERSAL}{_json.dumps(gone)}</script>", item["id"])
+    with pytest.raises(VideoUnavailable):
+        parse_video_page("<html>blocked</html>", item["id"])
+
+
+def test_fetch_video_retries(monkeypatch):
+    import fetch_video
+    calls = []
+
+    class R:
+        status_code = 503
+        text = ""
+
+    monkeypatch.setattr(fetch_video.requests, "get", lambda *a, **k: calls.append(1) or R())
+    monkeypatch.setattr(fetch_video.time, "sleep", lambda s: None)
+    import pytest
+    with pytest.raises(RuntimeError):
+        fetch_video.fetch_video("https://x", "1", None, attempts=3)
+    assert len(calls) == 3
