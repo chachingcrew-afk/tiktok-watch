@@ -2,6 +2,11 @@ name: Diagnose TikTok access
 
 on:
   workflow_dispatch:
+    inputs:
+      only:
+        description: 'Comma-separated variant names to try ("none" = proxy check only)'
+        type: string
+        default: ''
 
 concurrency:
   group: tiktok-watch
@@ -25,3 +30,4 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           PROXY_URL: ${{ secrets.PROXY_URL }}
           MS_TOKEN: ${{ secrets.MS_TOKEN }}
+          ONLY_VARIANTS: ${{ inputs.only }}
