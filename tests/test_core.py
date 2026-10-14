@@ -219,3 +219,16 @@ def test_shop_categories_setting():
     cfg = Config()
     cfg.apply_overrides({"shop_categories": ["kitchen-appliances/844168", "bad cat", "/fitness/835336/"], "shop_min_price": 30})
     assert cfg.shop_categories == ["kitchen-appliances/844168", "fitness/835336"] and cfg.shop_min_price == 30
+
+
+def test_gallery_urls_and_resize():
+    from gallery import gallery_urls, sized
+    u1 = r"https://p16-oec-general-useast5.ttcdn-us.com/tos-useast5-i-x-tx/b3df927a807a4fea87ee5f4f13cb15e9~tplv-fhlh96nyum-crop-webp:800:800.webp?dr=1&t=2"
+    u2 = r"https://p16-oec-general-useast5.ttcdn-us.com/tos-useast5-i-x-tx/5cb2b7f72caa44a3a5611e61ede5f2cb~tplv-fhlh96nyum-crop-webp:800:800.webp?dr=1&t=2"
+    page = ('<script>{\\"product\\":{\\"images\\":[{\\"width\\":800,\\"uri\\":\\"a\\",\\"url_list\\":[\\"' + u1 + '\\"]},'
+            '{\\"width\\":800,\\"uri\\":\\"b\\",\\"url_list\\":[\\"' + u2 + '\\"]},'
+            '{\\"width\\":800,\\"uri\\":\\"a\\",\\"url_list\\":[\\"' + u1 + '\\"]}],\\"title\\":\\"x [y]\\"}}</script>')
+    urls = gallery_urls(page)
+    assert len(urls) == 2 and urls[0].startswith("https://p16-oec") and "b3df927a" in urls[0]
+    assert sized(urls[0], 360).count("~tplv-fhlh96nyum-resize-webp:360:360.webp?dr=1&t=2") == 1
+    assert "crop-webp:96:96.webp" in sized("https://x/y~tplv-abc-crop-webp:2048:2048.webp?dr=1&amp;t=2", 96, crop=True)

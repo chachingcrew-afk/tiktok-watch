@@ -228,3 +228,66 @@ def save_shop_product_page(conn, product_id: str, info: dict) -> None:
             " price_original = coalesce(%s, price_original) where product_id = %s",
             (info.get("sold"), info.get("price_min"), info.get("price_original"), product_id),
         )
+
+
+# ---------- product images (gallery.py) ----------
+
+def products_without_thumb(conn, limit: int) -> list[tuple[str, str]]:
+    with conn.cursor() as cur:
+        cur.execute(
+            "select product_id, image from tiktok_watch.shop_products"
+            " where thumb is null and image is not null and not hidden and last_seen > now() - interval '14 days'"
+            " order by last_sold desc nulls last limit %s",
+            (limit,),
+        )
+        return cur.fetchall()
+
+
+def save_thumb(conn, product_id: str, data: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute("update tiktok_watch.shop_products set thumb = %s where product_id = %s", (data, product_id))
+
+
+def products_without_gallery(conn, min_sold: int, limit: int) -> list[tuple[str, str]]:
+    """Promising products with no gallery yet (failed attempts are retried after 3 days)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "select product_id, url from tiktok_watch.shop_products"
+            " where url is not null and not hidden and (coalesce(last_sold, 0) >= %s or starred)"
+            "   and last_seen > now() - interval '14 days'"
+            "   and (gallery_at is null or (coalesce(gallery_count, 0) = 0 and gallery_at < now() - interval '3 days'))"
+            " order by starred desc, last_sold desc nulls last limit %s",
+            (min_sold, limit),
+        )
+        return cur.fetchall()
+
+
+def save_gallery(conn, product_id: str, images: list[str]) -> None:
+    with conn.cursor() as cur:
+        cur.execute("delete from tiktok_watch.shop_product_images where product_id = %s", (product_id,))
+        for i, data in enumerate(images):
+            cur.execute("insert into tiktok_watch.shop_product_images (product_id, idx, data) values (%s,%s,%s)", (product_id, i, data))
+        cur.execute("update tiktok_watch.shop_products set gallery_at = now(), gallery_count = %s where product_id = %s",
+                    (len(images), product_id))
+
+
+def mark_gallery(conn, product_id: str, count: int) -> None:
+    with conn.cursor() as cur:
+        cur.execute("update tiktok_watch.shop_products set gallery_at = now(), gallery_count = %s where product_id = %s",
+                    (count, product_id))
+
+
+def prune_galleries(conn) -> int:
+    """Remove galleries of hidden products and of products not seen for 30 days (starred ones stay)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "delete from tiktok_watch.shop_product_images i using tiktok_watch.shop_products p"
+            " where p.product_id = i.product_id and not p.starred and (p.hidden or p.last_seen < now() - interval '30 days')"
+        )
+        n = cur.rowcount
+        cur.execute(
+            "update tiktok_watch.shop_products set gallery_at = null, gallery_count = null"
+            " where gallery_count > 0 and not starred and (hidden or last_seen < now() - interval '30 days')"
+            "   and not exists (select 1 from tiktok_watch.shop_product_images i where i.product_id = shop_products.product_id)"
+        )
+        return n

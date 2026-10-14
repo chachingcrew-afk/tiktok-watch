@@ -248,7 +248,16 @@ tr.clickable:hover td { background: var(--sunken); }
 .prow[aria-current="true"]::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--cobalt); }
 .thumb { width: 48px; height: 48px; border-radius: 8px; background: var(--sunken); border: 1px solid var(--line); overflow: hidden; display: grid; place-items: center; color: var(--faint); font-size: 18px; }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.d-img { width: 100%; max-height: 240px; aspect-ratio: 1 / 1; object-fit: contain; background: var(--sunken); border-radius: 10px; border: 1px solid var(--line); }
+.gal { display: grid; gap: 8px; }
+.gal-main { position: relative; width: 100%; max-width: 100%; aspect-ratio: 1 / 1; max-height: 340px; background: var(--sunken); border-radius: 10px; border: 1px solid var(--line); overflow: hidden; display: grid; place-items: center; color: var(--muted); font-size: 12.5px; }
+.gal-main img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.gal-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); font-size: 18px; line-height: 1; display: grid; place-items: center; box-shadow: var(--shadow); }
+.gal-nav.prev { left: 8px; } .gal-nav.next { right: 8px; }
+.gal-count { position: absolute; right: 8px; bottom: 8px; font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--surface); color: var(--muted); border: 1px solid var(--line); }
+.gal-strip { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+.gal-strip button { flex: none; width: 52px; height: 52px; padding: 0; border-radius: 8px; border: 2px solid transparent; background: var(--sunken); overflow: hidden; }
+.gal-strip button[aria-current="true"] { border-color: var(--cobalt); }
+.gal-strip img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .rev-main { font-weight: 800; font-size: 15px; font-stretch: 108%; }
 .rev-main.win { color: var(--grow); }
 .grow-main { font-weight: 800; font-size: 15px; font-stretch: 108%; }
@@ -336,7 +345,7 @@ tr.clickable:hover td { background: var(--sunken); }
         <div class="rows" id="shop-rows" role="list">
           <div class="empty"><b>Termékek betöltése</b>Pár másodperc, és itt lesznek a TikTok Shop kategóriákból gyűjtött termékek.</div>
         </div>
-        <div class="listfoot"><span><kbd>↑</kbd> <kbd>↓</kbd> lépkedés</span><span><kbd>S</kbd> csillag</span><span><kbd>H</kbd> elrejtés</span><span><kbd>/</kbd> keresés</span></div>
+        <div class="listfoot"><span><kbd>↑</kbd> <kbd>↓</kbd> lépkedés</span><span><kbd>←</kbd> <kbd>→</kbd> képek</span><span><kbd>S</kbd> csillag</span><span><kbd>H</kbd> elrejtés</span><span><kbd>/</kbd> keresés</span></div>
       </div>
       <aside class="panel detail" id="shop-detail" aria-label="Kiválasztott termék">
         <div class="d-empty">Válassz egy terméket a listából.</div>
@@ -499,6 +508,8 @@ tr.clickable:hover td { background: var(--sunken); }
 
   let mcp = null, loading = false, tags = [], cats = [], dirty = false;
   let state = { videos: [], shop: [], history: {}, phist: {}, runs: [], settings: {} };
+  const thumbs = {}, galleries = {}, galleryLoading = {};
+  let galIdx = 0;
   let sview = { seg: store.get("sseg") || "all", sort: store.get("ssort") || "revenue_per_day", q: "", cat: "", selected: null };
   let view = { seg: store.get("seg") || "tracking", sort: store.get("sort") || "recent_views_per_hour", q: "", selected: null, openRun: null };
 
@@ -551,7 +562,7 @@ select json_build_object(
  'shop', (select coalesce(json_agg(t), '[]'::json) from (
     select product_id, title, url, image, category_id, category_name, shop_name, price, price_original, rating, reviews,
            coalesce(sold_now, last_sold) as sold_now, sold_checked_at, sold_per_day, sold_per_day_week, revenue_per_day,
-           growth_pct, sold_per_day_prev, trend,
+           growth_pct, sold_per_day_prev, trend, gallery_count,
            first_seen, last_seen, starred, hidden
     from tiktok_watch.shop_product_scores where last_seen > now() - interval '21 days' or starred
     order by hidden, revenue_per_day desc nulls last, last_sold desc nulls last limit 1000) t),
@@ -571,6 +582,7 @@ select json_build_object(
       state.phist = state.phist || {}; state.shop = state.shop || [];
       banner(null);
       renderAll();
+      loadThumbs();
     } catch (e) {
       banner(errorText(e), true);
       $("runs-mini").replaceChildren(el("span", { class: "run-pill" }, el("span", { class: "dot err" }), "Nincs kapcsolat az adatbázissal"));
@@ -884,11 +896,61 @@ select json_build_object(
     if (rows.length > shown.length) $("shop-rows").append(el("div", { class: "listfoot" }, `Az első ${shown.length} látszik a ${nf(rows.length)}-ból. Szűkíts kategóriára vagy keresésre.`));
     renderShopDetail();
   }
+  const webp = (b) => "data:image/webp;base64," + b;
   function thumb(p) {
-    const box = el("div", { class: "thumb", "aria-hidden": "true" });
-    if (p.image) { const img = el("img", { src: p.image, alt: "", loading: "lazy", referrerpolicy: "no-referrer" }); img.addEventListener("error", () => box.replaceChildren("▢")); box.append(img); }
-    else box.append("▢");
+    const box = el("div", { class: "thumb", "aria-hidden": "true", "data-thumb": p.product_id });
+    box.append(thumbs[p.product_id] ? el("img", { src: webp(thumbs[p.product_id]), alt: "" }) : "▢");
     return box;
+  }
+  // Images are stored in the database (the page cannot load them from TikTok), so they load after the list.
+  async function loadThumbs() {
+    const ids = shopRows().concat(state.shop).map(p => p.product_id).filter((id, i, a) => /^\d+$/.test(id) && !thumbs[id] && a.indexOf(id) === i);
+    for (let i = 0; i < ids.length; i += 150) {
+      const chunk = ids.slice(i, i + 150);
+      let rows;
+      try { rows = await sql(`select product_id, thumb from tiktok_watch.shop_products where thumb is not null and product_id in (${chunk.map(id => `'${id}'`).join(",")})`); }
+      catch (_) { return; }
+      for (const r of rows) {
+        thumbs[r.product_id] = r.thumb;
+        for (const box of document.querySelectorAll(`[data-thumb="${r.product_id}"]`)) box.replaceChildren(el("img", { src: webp(r.thumb), alt: "" }));
+      }
+      if (rows.some(r => r.product_id === sview.selected) && !galleries[sview.selected]) renderShopDetail();
+    }
+  }
+  async function loadGallery(p) {
+    const id = p.product_id;
+    if (galleries[id] || galleryLoading[id] || !p.gallery_count || !/^\d+$/.test(id)) return;
+    galleryLoading[id] = true;
+    try {
+      const rows = await sql(`select idx, data from tiktok_watch.shop_product_images where product_id = '${id}' order by idx`);
+      galleries[id] = rows.map(r => r.data);
+    } catch (_) { galleries[id] = null; }
+    galleryLoading[id] = false;
+    if (sview.selected === id) renderShopDetail();
+  }
+  function galleryEl(p) {
+    const imgs = galleries[p.product_id] || (thumbs[p.product_id] ? [thumbs[p.product_id]] : []);
+    const full = !!galleries[p.product_id];
+    if (galIdx >= imgs.length) galIdx = 0;
+    const main = el("div", { class: "gal-main" });
+    if (imgs.length) main.append(el("img", { src: webp(imgs[galIdx]), alt: (p.title || "Termékkép") + ` (${galIdx + 1}. kép)` }));
+    else main.append(p.gallery_count === 0 ? "Ehhez a termékhez nem sikerült képet letölteni." : "A képek a következő reggeli futás után jelennek meg.");
+    if (!full && p.gallery_count && imgs.length) main.append(el("span", { class: "gal-count" }, "Galéria betöltése…"));
+    if (full && imgs.length > 1) {
+      main.append(
+        el("button", { type: "button", class: "gal-nav prev", "aria-label": "Előző kép", onclick: () => stepGallery(-1) }, "‹"),
+        el("button", { type: "button", class: "gal-nav next", "aria-label": "Következő kép", onclick: () => stepGallery(1) }, "›"),
+        el("span", { class: "gal-count" }, `${galIdx + 1} / ${imgs.length}`));
+    }
+    const strip = full && imgs.length > 1 ? el("div", { class: "gal-strip", role: "group", "aria-label": "Képek" },
+      ...imgs.map((b, i) => el("button", { type: "button", "aria-label": `${i + 1}. kép`, "aria-current": String(i === galIdx), onclick: () => { galIdx = i; renderShopDetail(); } }, el("img", { src: webp(b), alt: "" })))) : null;
+    return el("div", { class: "gal" }, main, strip);
+  }
+  function stepGallery(d) {
+    const imgs = galleries[sview.selected];
+    if (!imgs || imgs.length < 2) return;
+    galIdx = (galIdx + d + imgs.length) % imgs.length;
+    renderShopDetail();
   }
   function shopStar(p) {
     return el("button", { type: "button", class: "starbtn", "aria-pressed": String(!!p.starred), "aria-label": p.starred ? "Csillag levétele" : "Csillagozás", title: p.starred ? "Csillag levétele (S)" : "Csillagozás (S)", onclick: () => shopToggleStar(p) }, p.starred ? "★" : "☆");
@@ -919,6 +981,7 @@ select json_build_object(
         p.price_original && Number(p.price_original) > Number(p.price) ? el("div", { class: "num-sub" }, "volt $" + Number(p.price_original).toFixed(2)) : null));
   }
   function shopSelect(id, openSheet) {
+    if (sview.selected !== id) galIdx = 0;
     sview.selected = id;
     for (const r of $("shop-rows").querySelectorAll(".prow")) r.setAttribute("aria-current", String(r.dataset.id === id));
     renderShopDetail();
@@ -930,8 +993,8 @@ select json_build_object(
     if (!p) { d.replaceChildren(el("div", { class: "d-empty" }, "Válassz egy terméket a listából.")); closeShopSheet(); return; }
     const ph = (state.phist || {})[p.product_id] || [];
     const kvItem = (val, label, cls) => el("div", { class: cls || "" }, el("b", {}, val), el("span", {}, label));
-    const img = p.image ? el("img", { class: "d-img", src: p.image, alt: p.title || "", referrerpolicy: "no-referrer" }) : null;
-    if (img) img.addEventListener("error", () => img.remove());
+    loadGallery(p);
+    const img = galleryEl(p);
     const monthly = p.revenue_per_day != null ? Number(p.revenue_per_day) * 30 : null;
     d.replaceChildren(
       el("div", { class: "d-head" },
@@ -997,6 +1060,8 @@ select json_build_object(
     else if ((e.key === "s" || e.key === "S") && cur) { e.preventDefault(); shopToggleStar(cur); }
     else if ((e.key === "h" || e.key === "H") && cur) { e.preventDefault(); shopSetHidden(cur, !cur.hidden); }
     else if (e.key === "/") { e.preventDefault(); $("shop-search").focus(); }
+    else if (e.key === "ArrowRight" || e.key === "l") { e.preventDefault(); stepGallery(1); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); stepGallery(-1); }
   }
   $("shop-sort").addEventListener("change", () => { sview.sort = $("shop-sort").value; store.set("ssort", sview.sort); renderShopList(); });
   for (const b of $("shop-thead").querySelectorAll("button[data-sort]")) b.addEventListener("click", () => { sview.sort = b.dataset.sort; store.set("ssort", sview.sort); renderShopList(); });

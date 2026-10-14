@@ -22,6 +22,7 @@ from collections import Counter
 import requests
 
 import db
+import gallery
 from core import Config, proxy_settings
 from fetch_product import _unescape, fetch_product
 from fetch_video import HEADERS
@@ -202,6 +203,12 @@ async def main() -> None:
     try:
         seen = await scan_categories(cfg, conn, proxies)
         await refresh_missing(cfg, conn, proxies, seen)
+        try:
+            await asyncio.to_thread(gallery.run, conn, cfg.shop_track_min_sold, proxies, STATS)
+        except Exception as e:  # images are a convenience; never fail the scan because of them
+            conn.rollback()
+            STATS["gallery_failed"] += 1
+            log.warning("Gallery step failed: %s", e)
     except BaseException as e:
         db.finish_run(conn, run_id, False, {**STATS, "categories": CATS}, str(e))
         raise
