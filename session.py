@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from TikTokApi import TikTokApi
 
 from core import proxy_settings
+import tiktok_patch
 
 log = logging.getLogger("tiktok-watch")
 
@@ -35,6 +36,13 @@ async def tiktok_session(headless: bool | None = None, browser: str | None = Non
     pw_proxy, req_proxy = proxy_settings(os.environ.get("PROXY_URL")) if use_proxy else (None, None)
     if use_proxy and not pw_proxy:
         log.warning("No PROXY_URL set. From a server TikTok will very likely block requests.")
+    patch = env_flag("SIGNING_PATCH", "1")
+    context_options = {}
+    if patch:
+        tiktok_patch.apply()
+        ua = await tiktok_patch.clean_user_agent(browser, headless)
+        if ua:
+            context_options["user_agent"] = ua
     log.info("Session: browser=%s headless=%s ms_token=%s proxy=%s", browser, headless, bool(ms_token), bool(pw_proxy))
     async with TikTokApi() as api:
         await api.create_sessions(
@@ -46,5 +54,6 @@ async def tiktok_session(headless: bool | None = None, browser: str | None = Non
             browser=browser,
             suppress_resource_load_types=SAVE_BANDWIDTH,
             timeout=60000,
+            context_options=context_options,
         )
         yield api, req_proxy

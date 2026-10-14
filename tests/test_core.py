@@ -93,3 +93,11 @@ def test_apply_overrides():
     assert cfg.max_age_days == 7  # string rejected
     assert cfg.min_snapshots_before_drop == 3  # bool is not an int here
     assert set(applied) == {"min_views", "include_trending", "hashtags"}
+
+
+def test_strip_signed_params():
+    from tiktok_patch import strip_signed_params
+    u = "https://www.tiktok.com/api/challenge/item_list/?aid=1988&challengeID=123&msToken=abc&X-Bogus=xyz&count=30"
+    out = strip_signed_params(u)
+    assert "msToken" not in out and "X-Bogus" not in out
+    assert "aid=1988" in out and "challengeID=123" in out and "count=30" in out
