@@ -65,7 +65,7 @@ async def tiktok_session(headless: bool | None = None, browser: str | None = Non
     log.info("Session: browser=%s headless=%s ms_token=%s proxy=%s", browser, headless, bool(ms_token), bool(pw_proxy))
     # Starting the session loads tiktok.com through the proxy; a slow exit IP can time out.
     # Retry with a fresh browser (and, with a rotating proxy, a fresh IP) before giving up.
-    attempts = 3
+    attempts = 5
     for attempt in range(1, attempts + 1):
         started = False
         try:
