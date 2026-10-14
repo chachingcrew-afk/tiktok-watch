@@ -13,13 +13,16 @@ from session import setup_logging, tiktok_session
 
 log = logging.getLogger("tiktok-watch")
 STATS: Counter = Counter()  # also written to tiktok_watch.runs for the dashboard
+FEEDS: dict = {}  # per-feed results (seen, new, error), stored with the run for troubleshooting
 
 
 async def scan(api, source: str, iterator, cfg: Config, conn, known: set[str], stats: Counter) -> None:
     now = datetime.now(timezone.utc)
+    feed = FEEDS.setdefault(source, {"seen": 0, "new": 0})
     try:
         async for video in iterator:
             stats["seen"] += 1
+            feed["seen"] += 1
             parsed = parse_video(video.as_dict)
             if parsed is None:
                 stats["unparsable"] += 1
@@ -36,10 +39,12 @@ async def scan(api, source: str, iterator, cfg: Config, conn, known: set[str], s
                             parsed.shares, parsed.saves)
             conn.commit()
             known.add(parsed.video_id)
+            feed["new"] += 1
             log.info("NEW %s | %s views | %s", parsed.url, f"{parsed.views:,}", parsed.description[:60])
     except Exception as e:  # one broken feed should not kill the whole run
         stats["feed_errors"] += 1
-        log.error("Feed %s failed: %s", source, e)
+        feed["error"] = (type(e).__name__ + ": " + str(e))[:300]
+        log.error("Feed %s failed after %d videos: %s", source, feed["seen"], e)
 
 
 async def main() -> None:
@@ -52,9 +57,9 @@ async def main() -> None:
     try:
         await run(cfg, conn)
     except BaseException as e:
-        db.finish_run(conn, run_id, False, dict(STATS), str(e))
+        db.finish_run(conn, run_id, False, {**STATS, "feeds": FEEDS}, str(e))
         raise
-    db.finish_run(conn, run_id, True, dict(STATS))
+    db.finish_run(conn, run_id, True, {**STATS, "feeds": FEEDS})
     conn.close()
 
 
