@@ -237,7 +237,7 @@ tr.clickable:hover td { background: var(--sunken); }
 .run-err { color: var(--bad); font-size: 12.5px; white-space: normal; max-width: 520px; }
 
 /* shop products list */
-.prow-head, .prow { display: grid; grid-template-columns: 34px 48px minmax(0, 1fr) 112px 96px 96px 84px; gap: 12px; align-items: center; padding: 0 14px; }
+.prow-head, .prow { display: grid; grid-template-columns: 34px 48px minmax(0, 1fr) 104px 112px 90px 90px 80px; gap: 12px; align-items: center; padding: 0 14px; }
 .prow-head { font-size: 12px; color: var(--muted); font-stretch: 85%; font-weight: 600; border-bottom: 1px solid var(--line); background: var(--sunken); }
 .prow-head button { border: 0; background: none; padding: 9px 0; text-align: left; color: inherit; font-weight: inherit; font-stretch: inherit; display: inline-flex; gap: 4px; }
 .prow-head button[aria-sort] { color: var(--ink); }
@@ -251,6 +251,8 @@ tr.clickable:hover td { background: var(--sunken); }
 .d-img { width: 100%; max-height: 240px; aspect-ratio: 1 / 1; object-fit: contain; background: var(--sunken); border-radius: 10px; border: 1px solid var(--line); }
 .rev-main { font-weight: 800; font-size: 15px; font-stretch: 108%; }
 .rev-main.win { color: var(--grow); }
+.grow-main { font-weight: 800; font-size: 15px; font-stretch: 108%; }
+.grow-main.hot { color: var(--heat); }
 .catsel { border: 1px solid var(--line-strong); border-radius: 8px; padding: 6px 8px; background: var(--surface); max-width: 220px; min-width: 0; }
 .pending { font-size: 12px; color: var(--faint); }
 .tag.cat { background: var(--sunken); color: var(--ink); border: 1px solid var(--line); font-weight: 500; }
@@ -260,7 +262,8 @@ tr.clickable:hover td { background: var(--sunken); }
 .range .field input[type="number"] { max-width: 120px; }
 @media (max-width: 760px) {
   .prow-head { display: none; }
-  .prow { grid-template-columns: 30px 48px minmax(0, 1fr) auto; grid-template-areas: "star img prod prod" "star img rev price" "star img sold total"; row-gap: 4px; padding-top: 12px; padding-bottom: 12px; }
+  .prow { grid-template-columns: 30px 48px minmax(0, 1fr) auto; grid-template-areas: "star img prod prod" "star img grow price" "star img rev total" "star img sold sold"; row-gap: 4px; padding-top: 12px; padding-bottom: 12px; }
+  .prow > .c-grow { grid-area: grow; text-align: left; }
   .prow > .c-star { grid-area: star; align-self: start; }
   .prow > .thumb { grid-area: img; align-self: start; }
   .prow > .c-prod { grid-area: prod; }
@@ -310,6 +313,8 @@ tr.clickable:hover td { background: var(--sunken); }
             <select class="catsel" id="shop-cat" aria-label="Kategória"><option value="">Minden kategória</option></select>
             <select class="sortsel" id="shop-sort" aria-label="Rendezés">
               <option value="revenue_per_day">Bevétel/nap</option>
+              <option value="growth_pct">Növekedés % (az eddigiekhez képest)</option>
+              <option value="trend">Gyorsulás (előző naphoz képest)</option>
               <option value="sold_per_day">Eladás/nap</option>
               <option value="sold_per_day_week">Eladás/nap (heti átlag)</option>
               <option value="sold_now">Összes eladás</option>
@@ -322,6 +327,7 @@ tr.clickable:hover td { background: var(--sunken); }
         <div class="prow-head" id="shop-thead">
           <span></span><span></span>
           <button type="button" data-sort="first_seen">Termék</button>
+          <button type="button" data-sort="growth_pct" class="r" title="A napi eladás az eddig eladott darabszám hány százaléka">Növekedés</button>
           <button type="button" data-sort="revenue_per_day" class="r">Bevétel/nap</button>
           <button type="button" data-sort="sold_per_day" class="r">Eladás/nap</button>
           <button type="button" data-sort="sold_now" class="r">Összesen</button>
@@ -466,7 +472,8 @@ tr.clickable:hover td { background: var(--sunken); }
   const KEYS_BOOL = ["include_trending","require_product_signal","require_shop_product"];
   const LIMITS = { videos_per_hashtag:[10,1000], trending_count:[0,1000], max_age_days:[1,30], min_views:[0,1e9], min_avg_views_per_hour:[0,1e8], drop_below_views_per_hour:[0,1e8], min_snapshots_before_drop:[2,20], min_product_price:[0,10000],
     shop_min_price:[0,10000], shop_max_price:[1,10000], shop_min_revenue_day:[0,1e7], shop_fetches_per_category:[1,10], shop_track_min_sold:[0,1e9] };
-  const SHOP_SEGMENTS = [["all", "Ársávban"], ["win", "Nyerő"], ["starred", "Csillagos"], ["new", "Új ma"], ["hidden", "Elrejtett"]];
+  const SHOP_SEGMENTS = [["all", "Ársávban"], ["win", "Nyerő"], ["rising", "Felfutó"], ["accel", "Gyorsul"], ["starred", "Csillagos"], ["new", "Új ma"], ["hidden", "Elrejtett"]];
+  const RISING_PCT = 5;
   const SEGMENTS = [
     ["tracking", "Követett"], ["accel", "Gyorsul"], ["starred", "Csillagos"], ["out", "Kiesett"], ["hidden", "Elrejtett"]
   ];
@@ -544,6 +551,7 @@ select json_build_object(
  'shop', (select coalesce(json_agg(t), '[]'::json) from (
     select product_id, title, url, image, category_id, category_name, shop_name, price, price_original, rating, reviews,
            coalesce(sold_now, last_sold) as sold_now, sold_checked_at, sold_per_day, sold_per_day_week, revenue_per_day,
+           growth_pct, sold_per_day_prev, trend,
            first_seen, last_seen, starred, hidden
     from tiktok_watch.shop_product_scores where last_seen > now() - interval '21 days' or starred
     order by hidden, revenue_per_day desc nulls last, last_sold desc nulls last limit 1000) t),
@@ -803,6 +811,8 @@ select json_build_object(
       if (!inBand(p) && !p.starred) return false;
       if (seg === "win") return isWin(p);
       if (seg === "new") return isNewToday(p);
+      if (seg === "rising") return Number(p.growth_pct) >= RISING_PCT;
+      if (seg === "accel") return Number(p.trend) > 1.2 && Number(p.sold_per_day) >= 10;
       return true;
     };
   }
@@ -836,7 +846,8 @@ select json_build_object(
   function renderShopSeg() {
     $("shop-seg").replaceChildren(...SHOP_SEGMENTS.map(([key, label]) => {
       const n = state.shop.filter(shopFilter(key)).length;
-      return el("button", { type: "button", "aria-pressed": String(sview.seg === key), title: key === "win" ? `Legalább $${nf(shopSet("shop_min_revenue_day"))} bevétel naponta` : null,
+      const tips = { win: `Legalább $${nf(shopSet("shop_min_revenue_day"))} bevétel naponta`, rising: `Naponta legalább ${RISING_PCT}%-kal nő az eddigi eladásokhoz képest`, accel: "Ma gyorsabban fogy, mint előző nap" };
+      return el("button", { type: "button", "aria-pressed": String(sview.seg === key), title: tips[key] || null,
         onclick: () => { sview.seg = key; store.set("sseg", key); renderShopSeg(); renderShopList(true); } }, label, el("em", {}, n));
     }));
   }
@@ -859,6 +870,8 @@ select json_build_object(
         all: ["Még nincs termék", "A reggeli termékkeresés után itt lesznek a beállított ársávba eső TikTok Shop termékek."],
         win: ["Még nincs nyerő termék", state.shop.some(p => p.sold_per_day != null) ? "Egyik termék sem éri el a beállított napi bevételt. A Beállításokban lejjebb veheted a határt." : "A napi bevételhez két egymást követő nap eladása kell, ez a holnap reggeli futás után jelenik meg."],
         starred: ["Még nincs csillagozott termék", "A ☆ jellel jelöld meg, ami tetszik. A csillagos termékek eladását akkor is méri, ha kikerülnek a kategórialistából."],
+        rising: ["Még nincs felfutó termék", state.shop.some(p => p.growth_pct != null) ? `Egyik termék sem nő naponta ${RISING_PCT}%-nál gyorsabban az eddigi eladásaihoz képest.` : "A növekedéshez két egymást követő nap eladása kell, ez a holnap reggeli futás után jelenik meg."],
+        accel: ["Most semmi nem gyorsul", "A gyorsuláshoz három nap mérés kell: a mai napi eladást veti össze az előző napival."],
         new: ["Ma nem jött új termék", "Az utolsó futás nem talált olyan terméket, ami korábban nem volt meg."],
         hidden: ["Nincs elrejtett termék", "Amit elrejtesz, ide kerül, és innen vissza is állíthatod."],
       };
@@ -880,6 +893,14 @@ select json_build_object(
   function shopStar(p) {
     return el("button", { type: "button", class: "starbtn", "aria-pressed": String(!!p.starred), "aria-label": p.starred ? "Csillag levétele" : "Csillagozás", title: p.starred ? "Csillag levétele (S)" : "Csillagozás (S)", onclick: () => shopToggleStar(p) }, p.starred ? "★" : "☆");
   }
+  const pct = (n) => n == null || isNaN(n) ? "–" : (Number(n) >= 10 ? Math.round(n) : dec(n)) + "%";
+  function trendBadge(p) {
+    if (p.trend == null) return null;
+    const t = Number(p.trend);
+    if (t > 1.2) return el("span", { class: "badge heat" }, "gyorsul ×" + dec(t));
+    if (t >= .8) return el("span", { class: "badge" }, "egyenletes");
+    return el("span", { class: "badge off" }, "lassul ×" + dec(t));
+  }
   function shopRowEl(p) {
     const rev = p.revenue_per_day, spd = p.sold_per_day;
     return el("div", { class: "prow", role: "listitem", "aria-current": String(sview.selected === p.product_id), "data-id": p.product_id, tabindex: "-1",
@@ -888,6 +909,8 @@ select json_build_object(
       thumb(p),
       el("div", { class: "c-prod", style: "min-width:0" }, el("div", { class: "p-title" }, p.title || "Névtelen termék"),
         el("div", { class: "p-sub" }, [p.category_name, p.shop_name].filter(Boolean).join(" · "), p.rating ? `  ★ ${dec(p.rating)}` : "")),
+      el("div", { class: "c-grow r" }, p.growth_pct != null ? el("div", { class: "grow-main" + (Number(p.growth_pct) >= RISING_PCT ? " hot" : "") }, "+" + pct(p.growth_pct)) : el("div", { class: "pending" }, "holnaptól"),
+        trendBadge(p) || (p.growth_pct != null ? el("div", { class: "num-sub" }, "naponta") : null)),
       el("div", { class: "c-rev r" }, rev != null ? el("div", { class: "rev-main" + (isWin(p) ? " win" : "") }, money(rev)) : el("div", { class: "pending" }, "holnaptól"),
         rev != null ? el("div", { class: "num-sub" }, "naponta") : null),
       el("div", { class: "c-spd r" }, el("div", { class: "num-main" }, spd != null ? "+" + short(spd) : "–"), el("div", { class: "num-sub" }, spd != null ? "db/nap" : "")),
@@ -929,9 +952,12 @@ select json_build_object(
           kvItem(p.sold_per_day_week != null ? "+" + nf(p.sold_per_day_week) : "–", "napi átlag a hét alatt"),
           kvItem(monthly != null ? money(monthly) : "–", "becsült havi bevétel"),
           kvItem(p.sold_now != null ? nf(p.sold_now) : "–", "eladva összesen"),
-          kvItem(p.first_seen ? ago(p.first_seen) : "–", "óta figyeljük")),
+          kvItem(p.first_seen ? ago(p.first_seen) : "–", "óta figyeljük"),
+          kvItem(p.growth_pct != null ? "+" + pct(p.growth_pct) : "–", "növekedés naponta az eddigiekhez képest", Number(p.growth_pct) >= RISING_PCT ? "heat" : ""),
+          kvItem(p.trend != null ? "×" + dec(p.trend) : "–", p.sold_per_day_prev != null ? `tempó az előző naphoz képest (akkor +${nf(p.sold_per_day_prev)}/nap)` : "gyorsulás 3 nap mérés után", Number(p.trend) > 1.2 ? "heat" : ""),
+          kvItem(p.growth_pct != null && Number(p.growth_pct) > 0 ? dec(Math.log(2) / Math.log(1 + Number(p.growth_pct) / 100), 0) + " nap" : "–", "alatt duplázódna az eladás ebben a tempóban")),
         ph.length >= 2 ? bigChart(ph, "var(--chart2)", "var(--chart2-fill)", "Eladott darab") : el("div", { class: "d-note" }, "Az eladási görbe a második napi mérés után rajzolódik ki."),
-        el("div", { class: "d-note" }, "A bevétel a mostani ár és a napi eladott darab szorzata, a TikTok Shop összesített eladásszámából számolva. Több változatnál a legolcsóbb árral számol.")),
+        el("div", { class: "d-note" }, "A bevétel a mostani ár és a napi eladott darab szorzata. A növekedés azt mutatja, hogy a napi eladás az addig eladott darabszám hány százaléka: 5000 eladott mellett napi 700 az 14%, 50 000 mellett napi 2000 csak 4%. 50 darab alatti eladásnál nem számolja, mert ott túl zajos.")),
       el("div", { class: "d-sec" },
         el("h3", {}, "Termék"),
         el("div", { class: "kv" },
