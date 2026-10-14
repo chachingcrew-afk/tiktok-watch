@@ -36,6 +36,8 @@ class Config:
     min_views: int = _env_int("MIN_VIEWS", 20_000)
     min_avg_views_per_hour: int = _env_int("MIN_AVG_VIEWS_PER_HOUR", 500)
     require_product_signal: bool = os.environ.get("REQUIRE_PRODUCT_SIGNAL", "1") == "1"
+    # Only keep videos with a real TikTok Shop product linked (price, sales and link available)
+    require_shop_product: bool = os.environ.get("REQUIRE_SHOP_PRODUCT", "1") == "1"
 
     # Tracking: drop a video when its last 6h velocity falls below this (after MIN_SNAPSHOTS_BEFORE_DROP checks)
     drop_below_views_per_hour: int = _env_int("DROP_BELOW_VIEWS_PER_HOUR", 300)
@@ -51,7 +53,7 @@ class Config:
     EDITABLE = {
         "hashtags": list, "videos_per_hashtag": int, "include_trending": bool, "trending_count": int,
         "max_age_days": int, "min_views": int, "min_avg_views_per_hour": int,
-        "require_product_signal": bool, "drop_below_views_per_hour": int, "min_snapshots_before_drop": int,
+        "require_product_signal": bool, "require_shop_product": bool, "drop_below_views_per_hour": int, "min_snapshots_before_drop": int,
         "product_check_hours": int, "min_product_price": int,
     }
 
@@ -211,6 +213,8 @@ def passes_collect_filter(v: ParsedVideo, cfg: Config, now: datetime) -> tuple[b
         return False, "low_views"
     if v.views / hours < cfg.min_avg_views_per_hour:
         return False, "slow"
+    if cfg.require_shop_product and not (v.product_info or {}).get("product_id"):
+        return False, "no_shop_product"
     if cfg.require_product_signal and not v.has_product:
         return False, "no_product"
     return True, "ok"

@@ -68,11 +68,14 @@ def test_no_product_signal():
     d["challenges"] = [{"title": "dogsoftiktok"}]
     v = parse_video(d)
     assert not v.has_product
-    assert passes_collect_filter(v, Config(), NOW) == (False, "no_product")
+    cfg = Config()
+    cfg.require_shop_product = False
+    assert passes_collect_filter(v, cfg, NOW) == (False, "no_product")
 
 
 def test_filters():
     cfg = Config()
+    cfg.require_shop_product = False
     assert passes_collect_filter(parse_video(raw()), cfg, NOW) == (True, "ok")
     assert passes_collect_filter(parse_video(raw(hours_old=24 * 8)), cfg, NOW)[1] == "too_old"
     assert passes_collect_filter(parse_video(raw(views=5_000)), cfg, NOW)[1] == "low_views"
@@ -172,3 +175,14 @@ def test_parse_product_page():
     assert out["sold"] == 4402 and out["price_display"] == "$22.43 - 185.98"
     with pytest.raises(ProductUnavailable):
         parse_product_page("<html>nothing</html>", "1")
+
+
+def test_require_shop_product():
+    cfg = Config()
+    assert cfg.require_shop_product
+    no_shop = parse_video(raw())  # product words in caption, but no TikTok Shop product linked
+    assert passes_collect_filter(no_shop, cfg, NOW) == (False, "no_shop_product")
+    shop = parse_video(raw(anchors=[_shop_anchor()]))
+    assert passes_collect_filter(shop, cfg, NOW) == (True, "ok")
+    cfg.require_shop_product = False
+    assert passes_collect_filter(no_shop, cfg, NOW) == (True, "ok")

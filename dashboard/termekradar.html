@@ -204,6 +204,7 @@ td.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
         <div class="field"><label for="s-trending_count">Trending videók száma</label><small>Ennyit néz át a trending feedből.</small><input type="number" id="s-trending_count" min="0" max="1000" step="10"></div>
         <div class="field"><span class="toggle"><input type="checkbox" id="s-include_trending"><label for="s-include_trending">Trending feed is</label></span><small>A hashtageken kívül a TikTok trending feedjét is átnézi.</small></div>
         <div class="field"><span class="toggle"><input type="checkbox" id="s-require_product_signal"><label for="s-require_product_signal">Csak termékes videók</label></span><small>Csak az kerül be, amin TikTok Shop termék van, vagy a szöveg termékre utal.</small></div>
+        <div class="field"><span class="toggle"><input type="checkbox" id="s-require_shop_product"><label for="s-require_shop_product">Csak TikTok Shop termékes videók</label></span><small>Csak az kerül be, amihez valódi TikTok Shop termék van kapcsolva (így mindegyiknél lesz ár, eladás és link). Kikapcsolva az Amazonra vagy „link in bio”-ra mutató videók is bekerülnek.</small></div>
       </div>
       <h2>Mikor kerüljön be</h2>
       <div class="fields">
@@ -235,7 +236,7 @@ td.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
   const PROJECT = "sapxyvfiqyshwnwarctj";
   const SERVER = "Supabase";
   const KEYS_INT = ["videos_per_hashtag","trending_count","max_age_days","min_views","min_avg_views_per_hour","drop_below_views_per_hour","min_snapshots_before_drop","min_product_price"];
-  const KEYS_BOOL = ["include_trending","require_product_signal"];
+  const KEYS_BOOL = ["include_trending","require_product_signal","require_shop_product"];
   const LIMITS = { videos_per_hashtag:[10,1000], trending_count:[0,1000], max_age_days:[1,30], min_views:[0,1e9], min_avg_views_per_hour:[0,1e8], drop_below_views_per_hour:[0,1e8], min_snapshots_before_drop:[2,20], min_product_price:[0,10000] };
 
   const $ = (id) => document.getElementById(id);
