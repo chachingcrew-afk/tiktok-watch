@@ -3,13 +3,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 from collections import Counter
 from datetime import datetime, timezone
 
 import db
-from core import Config, parse_video, passes_collect_filter
+from core import Config, parse_video, passes_collect_filter, proxy_settings
 from session import setup_logging, tiktok_session
+from track import check_products
 
 log = logging.getLogger("tiktok-watch")
 STATS: Counter = Counter()  # also written to tiktok_watch.runs for the dashboard
@@ -73,6 +75,14 @@ async def run(cfg: Config, conn) -> None:
             await scan(api, f"#{tag}", api.hashtag(name=tag).videos(count=cfg.videos_per_hashtag),
                        cfg, conn, known, stats)
             await asyncio.sleep(random.uniform(3, 8))
+    # Read price and units sold of the newly found products right away, instead of waiting for
+    # the next 6-hourly tracking run (products already checked recently are skipped).
+    try:
+        _, req_proxy = proxy_settings(os.environ.get("PROXY_URL"))
+        await check_products(cfg, conn, req_proxy, asyncio.Semaphore(4), stats)
+    except Exception as e:  # prices are a bonus; never fail the collection over them
+        log.warning("Product check failed: %s", e)
+
     log.info("Done. %s", dict(stats))
     if stats["seen"] == 0:
         raise SystemExit("No videos returned at all. TikTok is probably blocking: check PROXY_URL and MS_TOKEN.")
