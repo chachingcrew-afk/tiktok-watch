@@ -1,6 +1,7 @@
 """Pure logic: config, video parsing, filtering and scoring. No network or DB here, so it can be unit tested."""
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass, field
@@ -105,21 +106,55 @@ def _int(v) -> int:
         return 0
 
 
+def _json_maybe(val):
+    if isinstance(val, str):
+        try:
+            return json.loads(val)
+        except ValueError:
+            return None
+    return val
+
+
+def _shop_product(d: dict) -> dict | None:
+    """Normalize one TikTok Shop product payload (the inner 'extra' of a type-33 anchor)."""
+    pid = d.get("product_id")
+    if not pid:
+        return None
+    pid = str(pid)
+    price = d.get("price") or d.get("min_price")
+    cats = [c.get("category_name") for c in (d.get("categories") or []) if isinstance(c, dict) and c.get("category_name")]
+    img_url = d.get("img_url")
+    image = d.get("cover_url") or (img_url[0] if isinstance(img_url, list) and img_url else None)
+    return {
+        "product_id": pid,
+        "title": (d.get("title") or d.get("elastic_title") or "").strip()[:500] or None,
+        "url": d.get("seo_url") or f"https://shop.tiktok.com/view/product/{pid}?region=US",
+        "image": image,
+        "category": " › ".join(cats) or None,
+        "seller_id": str(d["seller_id"]) if d.get("seller_id") else None,
+        "price": price if isinstance(price, (int, float)) and price > 0 else None,
+        "currency": d.get("currency"),
+    }
+
+
 def _product_from_anchors(data: dict) -> tuple[str | None, dict | None]:
-    """TikTok Shop videos carry the product in 'anchors' (or similar fields). Return (title, raw)."""
-    for key in ("anchors", "products", "productInfo", "shoppingInfo"):
-        val = data.get(key)
-        if not val:
+    """Return (product title, normalized product) for a video's linked TikTok Shop product.
+
+    TikTok Shop products sit in anchors of type 35, whose 'extra' is a JSON list of type-33 items,
+    each with its own JSON 'extra' holding the product. Other anchors (CapCut templates, green
+    screen effects, ...) are not products and are ignored.
+    """
+    for anchor in data.get("anchors") or []:
+        if not isinstance(anchor, dict):
             continue
-        items = val if isinstance(val, list) else [val]
-        for item in items:
-            if not isinstance(item, dict):
+        for item in _json_maybe(anchor.get("extra")) or []:
+            if not isinstance(item, dict) or str(item.get("type")) != "33":
                 continue
-            title = item.get("keyword") or item.get("title") or item.get("description") or item.get("name")
-            # anchor type 33/35 etc are shop products; accept any anchor that carries a title
-            if title:
-                return str(title)[:300], {"source_field": key, "item": item}
-        return None, {"source_field": key, "items": items[:3]}
+            inner = _json_maybe(item.get("extra"))
+            product = _shop_product(inner) if isinstance(inner, dict) else None
+            if product:
+                product["title"] = product["title"] or (item.get("keyword") or "").strip() or None
+                return product["title"], product
     return None, None
 
 
@@ -151,7 +186,7 @@ def parse_video(data: dict) -> ParsedVideo | None:
         comments=_int(stats.get("commentCount")),
         shares=_int(stats.get("shareCount")),
         saves=_int(stats.get("collectCount")),
-        has_product=bool(product_title or product_info) or keyword_hit,
+        has_product=bool(product_info) or keyword_hit,
         product_title=product_title,
         product_info=product_info,
     )

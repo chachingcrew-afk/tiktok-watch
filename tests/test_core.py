@@ -36,10 +36,31 @@ def test_parse_statsv2_strings():
     assert parse_video(d).views == 250_000
 
 
-def test_anchor_product_title():
-    v = parse_video(raw(desc="look at this", anchors=[{"keyword": "Portable Blender Pro", "type": 33}]))
-    v.hashtags = []
-    assert v.product_title == "Portable Blender Pro" and v.has_product
+def _shop_anchor(pid="1732570618364072053", title="20Pcs Christmas Gift Set"):
+    import json as _j
+    inner = {"product_id": int(pid), "title": title, "price": 0, "currency": "USD", "seller_id": 7494633470607590000,
+             "seo_url": f"https://shop.tiktok.com/us/pdp/gift-set/{pid}?source=anchor",
+             "cover_url": "https://img.example/cover.jpeg",
+             "categories": [{"category_name": "Home Supplies"}, {"category_name": "Party Bags & Party Favors"}]}
+    return {"type": 35, "extra": _j.dumps([{"type": 33, "keyword": title[:30], "id": pid, "extra": _j.dumps(inner)}])}
+
+
+def test_anchor_shop_product():
+    v = parse_video(raw(desc="look at this", anchors=[{"type": 54, "keyword": "CapCut · Editing made easy"}, _shop_anchor()]))
+    assert v.product_title == "20Pcs Christmas Gift Set" and v.has_product
+    p = v.product_info
+    assert p["product_id"] == "1732570618364072053"
+    assert p["url"].startswith("https://shop.tiktok.com/us/pdp/")
+    assert p["category"] == "Home Supplies › Party Bags & Party Favors"
+    assert p["image"] == "https://img.example/cover.jpeg" and p["price"] is None
+
+
+def test_capcut_anchor_is_not_a_product():
+    d = raw(desc="my morning routine", anchors=[{"type": 54, "keyword": "CapCut · Editing made easy"},
+                                               {"type": 28, "keyword": "Green Screen"}])
+    d["challenges"] = [{"title": "fyp"}]
+    v = parse_video(d)
+    assert v.product_title is None and v.product_info is None and not v.has_product
 
 
 def test_no_product_signal():

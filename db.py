@@ -22,21 +22,29 @@ def known_ids(conn) -> set[str]:
 
 
 def upsert_video(conn, v: ParsedVideo, source: str) -> None:
+    p = v.product_info or {}
     with conn.cursor() as cur:
         cur.execute(
             """
             insert into tiktok_watch.videos
               (video_id, author, description, url, created_at_tt, hashtags, has_product,
-               product_title, product_info, source, last_checked)
-            values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+               product_title, product_info, product_id, product_url, product_image, product_category,
+               product_price, source, last_checked)
+            values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
             on conflict (video_id) do update set
               description = excluded.description,
               product_title = coalesce(excluded.product_title, tiktok_watch.videos.product_title),
               product_info = coalesce(excluded.product_info, tiktok_watch.videos.product_info),
+              product_id = coalesce(excluded.product_id, tiktok_watch.videos.product_id),
+              product_url = coalesce(excluded.product_url, tiktok_watch.videos.product_url),
+              product_image = coalesce(excluded.product_image, tiktok_watch.videos.product_image),
+              product_category = coalesce(excluded.product_category, tiktok_watch.videos.product_category),
+              product_price = coalesce(excluded.product_price, tiktok_watch.videos.product_price),
               last_checked = now()
             """,
             (v.video_id, v.author, v.description, v.url, v.created_at, v.hashtags, v.has_product,
-             v.product_title, Jsonb(v.product_info) if v.product_info else None, source),
+             v.product_title, Jsonb(p) if p else None, p.get("product_id"), p.get("url"), p.get("image"),
+             p.get("category"), p.get("price"), source),
         )
 
 

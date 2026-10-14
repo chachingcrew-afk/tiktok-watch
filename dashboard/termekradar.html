@@ -95,6 +95,10 @@ select, input[type="number"], input[type="text"] { font: inherit; color: var(--f
 .pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
 .pill.hot { background: var(--hot-soft); color: var(--hot); }
 .pill.off { background: var(--line); color: var(--muted); }
+.shop { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); text-decoration: none; }
+.shop:hover { text-decoration: underline; }
+.product { display: grid; gap: 2px; font-size: 13px; }
+.product .cat { color: var(--muted); }
 .spark { width: 100%; height: 40px; display: block; }
 .detail { grid-column: 1 / -1; border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 8px; }
 .detail svg { width: 100%; height: 200px; display: block; }
@@ -168,6 +172,7 @@ td.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
         <select id="show">
           <option value="tracking">Csak a követetteket</option>
           <option value="accel">Csak a gyorsulókat</option>
+          <option value="shop">Csak TikTok Shop termékesek</option>
           <option value="starred">Csak a csillagozottakat</option>
           <option value="hidden">Elrejtettek</option>
           <option value="all">Mindet (kiesettekkel együtt)</option>
@@ -413,6 +418,7 @@ select json_build_object(
     if (show === "tracking") rows = rows.filter(v => v.status === "tracking");
     if (show === "accel") rows = rows.filter(v => v.status === "tracking" && Number(v.acceleration) > 1);
     if (show === "starred") rows = rows.filter(v => v.starred);
+    if (show === "shop") rows = rows.filter(v => v.product_id && v.status === "tracking");
     const key = (v) => sort === "newest" ? new Date(v.created_at_tt).getTime() : Number(v[sort]);
     rows.sort((a, b) => { const x = key(a), y = key(b); return (isNaN(y) ? -Infinity : y) - (isNaN(x) ? -Infinity : x); });
     if (!rows.length) {
@@ -435,7 +441,10 @@ select json_build_object(
             "aria-label": v.starred ? "Csillag levétele" : "Csillagozás", title: v.starred ? "Csillag levétele" : "Csillagozás",
             onclick: (e) => toggleStar(v, e.currentTarget)}, v.starred ? "★" : "☆"),
           el("div", {class:"title"}, title.length > 110 ? title.slice(0, 110) + "…" : title)),
-        el("div", {class:"meta"}, accelPill(v), " ", "@" + (v.author || "?"), " · ", Math.round(v.age_hours) + " órás · ",
+        el("div", {class:"meta"}, accelPill(v), " ",
+          v.product_url ? el("a", {class: "shop", href: v.product_url, target: "_blank", rel: "noopener", title: "Termék a TikTok Shopban"}, "TikTok Shop ↗") : null,
+          v.product_url ? " " : null,
+          "@" + (v.author || "?"), " · ", Math.round(v.age_hours) + " órás · ",
           el("a", {href: v.url, target: "_blank", rel: "noopener"}, "Megnyitás"), " · ",
           el("a", {href: "#", onclick: (e) => { e.preventDefault(); openId = openId === v.video_id ? null : v.video_id; renderList(); }}, openId === v.video_id ? "Bezárás" : "Grafikon"), " · ",
           v.hidden
@@ -450,6 +459,11 @@ select json_build_object(
     if (openId === v.video_id) {
       const box = el("div", {class:"detail"},
         el("div", {class:"desc"}, v.description || ""),
+        v.product_id ? el("div", {class: "product"},
+          el("b", {}, "Kapcsolt termék: " + (v.product_title || "névtelen termék")),
+          v.product_category ? el("span", {class: "cat"}, v.product_category) : null,
+          v.product_price ? el("span", {}, "Ár: $" + Number(v.product_price).toFixed(2)) : null,
+          el("a", {href: v.product_url, target: "_blank", rel: "noopener"}, "Megnyitás a TikTok Shopban ↗")) : null,
         el("div", {class:"note"}, `Átlag a feltöltés óta: ${nf(v.avg_views_per_hour)} nézés/óra · Utolsó mérés óta: ${v.growth_pct_last_check == null ? "–" : String(v.growth_pct_last_check).replace(".", ",") + "%"} · Lájk: ${nf(v.likes)} · Komment: ${nf(v.comments)} · Forrás: ${v.source || "–"}`));
       box.append(sparkline(history(v.video_id), 900, 200, 8, true));
       row.append(box);
