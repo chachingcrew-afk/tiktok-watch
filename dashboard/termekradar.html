@@ -562,9 +562,10 @@ select json_build_object(
  'shop', (select coalesce(json_agg(t), '[]'::json) from (
     select product_id, title, url, image, category_id, category_name, shop_name, price, price_original, rating, reviews,
            coalesce(sold_now, last_sold) as sold_now, sold_checked_at, sold_per_day, sold_per_day_week, revenue_per_day,
-           growth_pct, sold_per_day_prev, trend, gallery_count,
+           growth_pct, sold_per_day_prev, trend,
+           (select sp.gallery_count from tiktok_watch.shop_products sp where sp.product_id = v.product_id) as gallery_count,
            first_seen, last_seen, starred, hidden
-    from tiktok_watch.shop_product_scores where last_seen > now() - interval '21 days' or starred
+    from tiktok_watch.shop_product_scores v where last_seen > now() - interval '21 days' or starred
     order by hidden, revenue_per_day desc nulls last, last_sold desc nulls last limit 1000) t),
  'runs', (select coalesce(json_agg(r), '[]'::json) from (
     select id, job, started_at, finished_at, ok, stats, error from tiktok_watch.runs where job in ('collect','track','shop') order by started_at desc limit 30) r),
