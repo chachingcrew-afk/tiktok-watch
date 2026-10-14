@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '17 */6 * * *'
   workflow_dispatch:
+    inputs:
+      products_only:
+        description: 'Only refresh TikTok Shop prices and sales'
+        type: boolean
+        default: false
 
 # collect and track never run at the same time
 concurrency:
@@ -27,3 +32,4 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           PROXY_URL: ${{ secrets.PROXY_URL }}
           MS_TOKEN: ${{ secrets.MS_TOKEN }}
+          PRODUCTS_ONLY: ${{ inputs.products_only && '1' || '0' }}

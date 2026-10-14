@@ -42,11 +42,17 @@ class Config:
     min_snapshots_before_drop: int = _env_int("MIN_SNAPSHOTS_BEFORE_DROP", 3)
     max_fail_count: int = _env_int("MAX_FAIL_COUNT", 4)
 
+    # Products: re-read price and units sold at most this often; hide products whose most
+    # expensive variant is cheaper than min_product_price dollars (0 = off). Starred ones are kept.
+    product_check_hours: int = _env_int("PRODUCT_CHECK_HOURS", 20)
+    min_product_price: int = _env_int("MIN_PRODUCT_PRICE", 0)
+
     # Keys the dashboard may change, with their expected type
     EDITABLE = {
         "hashtags": list, "videos_per_hashtag": int, "include_trending": bool, "trending_count": int,
         "max_age_days": int, "min_views": int, "min_avg_views_per_hour": int,
         "require_product_signal": bool, "drop_below_views_per_hour": int, "min_snapshots_before_drop": int,
+        "product_check_hours": int, "min_product_price": int,
     }
 
     def apply_overrides(self, values: dict) -> list[str]:

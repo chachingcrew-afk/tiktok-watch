@@ -117,3 +117,49 @@ def finish_run(conn, run_id: int, ok: bool, stats: dict, error: str | None = Non
             (ok, Jsonb(stats), (error or "")[:2000] or None, run_id),
         )
     conn.commit()
+
+
+def products_due(conn, hours: int) -> list[tuple[str, str]]:
+    """Distinct TikTok Shop products of tracked videos whose price/sales were not read in the last `hours`."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "select product_id, min(product_url) from tiktok_watch.videos"
+            " where product_id is not null and product_url is not null and not hidden"
+            "   and (status = 'tracking' or starred)"
+            " group by product_id"
+            " having max(product_checked_at) is null or max(product_checked_at) < now() - make_interval(hours => %s)",
+            (hours,),
+        )
+        return cur.fetchall()
+
+
+def save_product(conn, product_id: str, info: dict) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "update tiktok_watch.videos set product_price = %s, product_price_max = %s,"
+            " product_price_original = %s, product_price_display = %s,"
+            " product_sold = coalesce(%s, product_sold), product_checked_at = now()"
+            " where product_id = %s",
+            (info.get("price_min"), info.get("price_max"), info.get("price_original"),
+             info.get("price_display"), info.get("sold"), product_id),
+        )
+        cur.execute(
+            "insert into tiktok_watch.product_snapshots (product_id, sold, price_min, price_max) values (%s,%s,%s,%s)",
+            (product_id, info.get("sold"), info.get("price_min"), info.get("price_max")),
+        )
+
+
+def mark_product_checked(conn, product_id: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute("update tiktok_watch.videos set product_checked_at = now() where product_id = %s", (product_id,))
+
+
+def hide_cheap_product(conn, product_id: str) -> int:
+    """Hide (not delete) the videos of a too-cheap product, unless the user starred them."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "update tiktok_watch.videos set hidden = true, hidden_at = now(), hidden_reason = 'cheap'"
+            " where product_id = %s and not starred and not hidden",
+            (product_id,),
+        )
+        return cur.rowcount

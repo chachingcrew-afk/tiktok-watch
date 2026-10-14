@@ -154,3 +154,21 @@ def test_fetch_video_retries(monkeypatch):
     with pytest.raises(RuntimeError):
         fetch_video.fetch_video("https://x", "1", None, attempts=3)
     assert len(calls) == 3
+
+
+def test_parse_product_page():
+    import json as _j
+    from fetch_product import parse_product_page, ProductUnavailable
+    import pytest
+    data = {"components": [{"price": {"symbol_position": 1, "is_interval_price": True, "real_price": "$22.43 - 185.98",
+                                      "currency": "USD", "min_sku_price": "22.43", "max_sku_price": "263.98",
+                                      "min_sku_original_price": "43.98"}},
+                           {"product_info": {"status": 1, "sold_count": "4402", "product_id": "1729511811452409061",
+                                             "title": "Rug"}}]}
+    # embedded the way the page does it: JSON inside a JSON string
+    html = '<script id="__MODERN_ROUTER_DATA__">' + _j.dumps({"x": _j.dumps(data)}) + "</script>"
+    out = parse_product_page(html, "1729511811452409061")
+    assert out["price_min"] == 22.43 and out["price_max"] == 263.98 and out["price_original"] == 43.98
+    assert out["sold"] == 4402 and out["price_display"] == "$22.43 - 185.98"
+    with pytest.raises(ProductUnavailable):
+        parse_product_page("<html>nothing</html>", "1")

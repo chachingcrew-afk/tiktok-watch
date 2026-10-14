@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 import db
 from core import Config, parse_video, proxy_settings, tracking_decision
+from fetch_product import fetch_product
 from fetch_video import fetch_video
 from session import setup_logging
 
@@ -46,6 +47,13 @@ async def run(cfg: Config, conn) -> None:
     if not req_proxy:
         log.warning("No PROXY_URL set. From a server TikTok will very likely block requests.")
 
+    gate = asyncio.Semaphore(CONCURRENCY)
+    if os.environ.get("PRODUCTS_ONLY") == "1":
+        # Manual run that only refreshes product prices/sales, so video timing stays on the 6h rhythm.
+        await check_products(cfg, conn, req_proxy, gate, stats)
+        log.info("Done (products only). %s", dict(stats))
+        return
+
     # Too-old videos are expired without a network call.
     active = []
     for video_id, url, created_at, _fails, starred in videos:
@@ -58,7 +66,6 @@ async def run(cfg: Config, conn) -> None:
 
     # Fetch a few pages at a time (each request goes out through its own proxy IP);
     # database writes stay sequential on this one connection.
-    gate = asyncio.Semaphore(CONCURRENCY)
 
     async def fetch(video_id, url):
         async with gate:
@@ -88,9 +95,42 @@ async def run(cfg: Config, conn) -> None:
         conn.commit()
         stats[status] += 1
 
+    await check_products(cfg, conn, req_proxy, gate, stats)
+
     log.info("Done. %s", dict(stats))
     if videos and stats["failed"] == len(videos):
         raise SystemExit("Every fetch failed. TikTok is probably blocking: check PROXY_URL.")
+
+
+async def check_products(cfg: Config, conn, req_proxy, gate: asyncio.Semaphore, stats: Counter) -> None:
+    """Read price and units sold of linked TikTok Shop products, at most every product_check_hours."""
+    due = db.products_due(conn, cfg.product_check_hours)
+    if not due:
+        return
+    log.info("Checking %d TikTok Shop products", len(due))
+
+    async def fetch(pid, url):
+        async with gate:
+            await asyncio.sleep(random.uniform(0.2, 1.5))
+            try:
+                return await asyncio.to_thread(fetch_product, url, pid, req_proxy)
+            except Exception as e:
+                return e
+
+    results = await asyncio.gather(*(fetch(pid, url) for pid, url in due))
+    for (pid, url), info in zip(due, results):
+        if isinstance(info, Exception):
+            log.warning("Product fetch failed for %s: %s", url, info)
+            db.mark_product_checked(conn, pid)  # try again next period, not every run
+            conn.commit()
+            stats["product_failed"] += 1
+            continue
+        db.save_product(conn, pid, info)
+        stats["product_ok"] += 1
+        top_price = info.get("price_max") or info.get("price_min")
+        if cfg.min_product_price > 0 and top_price is not None and top_price < cfg.min_product_price:
+            stats["product_hidden_cheap"] += db.hide_cheap_product(conn, pid)
+        conn.commit()
 
 
 if __name__ == "__main__":

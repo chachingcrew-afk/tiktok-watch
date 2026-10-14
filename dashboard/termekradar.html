@@ -164,6 +164,9 @@ td.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
           <option value="growth_pct_last_check">Növekedés % az utolsó mérés óta</option>
           <option value="shares_per_1k">Megosztás / 1000 nézés</option>
           <option value="saves_per_1k">Mentés / 1000 nézés</option>
+          <option value="product_sold_per_day">Termék eladás / nap</option>
+          <option value="product_sold">Termék összes eladás</option>
+          <option value="product_price_max">Termék ár</option>
           <option value="views">Összes nézés</option>
           <option value="newest">Legfrissebb videó</option>
         </select>
@@ -207,6 +210,7 @@ td.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
         <div class="field"><label for="s-max_age_days">Max. életkor (nap)</label><small>Ennél idősebb videó nem kerül be, és a követésből is kiesik.</small><input type="number" id="s-max_age_days" min="1" max="30"></div>
         <div class="field"><label for="s-min_views">Minimum nézés</label><small>Ennyi nézés alatt nem kerül be.</small><input type="number" id="s-min_views" min="0" step="1000"></div>
         <div class="field"><label for="s-min_avg_views_per_hour">Minimum átlagos nézés/óra</label><small>Összes nézés osztva a feltöltés óta eltelt órákkal.</small><input type="number" id="s-min_avg_views_per_hour" min="0" step="50"></div>
+        <div class="field"><label for="s-min_product_price">Minimum termékár ($)</label><small>A TikTok Shop termékes videók közül elrejti azokat, ahol a termék legdrágább változata is olcsóbb ennél. A csillagozottakat nem bántja. 0 = kikapcsolva. Az elrejtetteket az „Elrejtettek” listában találod.</small><input type="number" id="s-min_product_price" min="0" max="10000" step="1"></div>
       </div>
       <h2>Mikor essen ki</h2>
       <div class="fields">
@@ -230,9 +234,9 @@ td.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
 (() => {
   const PROJECT = "sapxyvfiqyshwnwarctj";
   const SERVER = "Supabase";
-  const KEYS_INT = ["videos_per_hashtag","trending_count","max_age_days","min_views","min_avg_views_per_hour","drop_below_views_per_hour","min_snapshots_before_drop"];
+  const KEYS_INT = ["videos_per_hashtag","trending_count","max_age_days","min_views","min_avg_views_per_hour","drop_below_views_per_hour","min_snapshots_before_drop","min_product_price"];
   const KEYS_BOOL = ["include_trending","require_product_signal"];
-  const LIMITS = { videos_per_hashtag:[10,1000], trending_count:[0,1000], max_age_days:[1,30], min_views:[0,1e9], min_avg_views_per_hour:[0,1e8], drop_below_views_per_hour:[0,1e8], min_snapshots_before_drop:[2,20] };
+  const LIMITS = { videos_per_hashtag:[10,1000], trending_count:[0,1000], max_age_days:[1,30], min_views:[0,1e9], min_avg_views_per_hour:[0,1e8], drop_below_views_per_hour:[0,1e8], min_snapshots_before_drop:[2,20], min_product_price:[0,10000] };
 
   const $ = (id) => document.getElementById(id);
   const fmt = new Intl.NumberFormat("hu-HU");
@@ -443,6 +447,9 @@ select json_build_object(
           el("div", {class:"title"}, title.length > 110 ? title.slice(0, 110) + "…" : title)),
         el("div", {class:"meta"}, accelPill(v), " ",
           v.product_url ? el("a", {class: "shop", href: v.product_url, target: "_blank", rel: "noopener", title: "Termék a TikTok Shopban"}, "TikTok Shop ↗") : null,
+          priceText(v) ? " " : null, priceText(v) ? el("span", {class: "pill"}, priceText(v)) : null,
+          v.product_sold != null ? " " : null, v.product_sold != null ? el("span", {class: "pill off"}, short(v.product_sold) + " eladva") : null,
+          v.hidden && v.hidden_reason === "cheap" ? " " : null, v.hidden && v.hidden_reason === "cheap" ? el("span", {class: "pill off"}, "túl olcsó") : null,
           v.product_url ? " " : null,
           "@" + (v.author || "?"), " · ", Math.round(v.age_hours) + " órás · ",
           el("a", {href: v.url, target: "_blank", rel: "noopener"}, "Megnyitás"), " · ",
@@ -462,7 +469,9 @@ select json_build_object(
         v.product_id ? el("div", {class: "product"},
           el("b", {}, "Kapcsolt termék: " + (v.product_title || "névtelen termék")),
           v.product_category ? el("span", {class: "cat"}, v.product_category) : null,
-          v.product_price ? el("span", {}, "Ár: $" + Number(v.product_price).toFixed(2)) : null,
+          priceText(v) ? el("span", {}, "Ár: " + priceText(v) + (v.product_price_original && v.product_price_original > v.product_price ? ` (eredetileg $${fmtPrice(v.product_price_original)})` : "")) : null,
+          v.product_sold != null ? el("span", {}, `Eladott darab összesen: ${nf(v.product_sold)}` + (v.product_sold_per_day != null ? ` · kb. ${nf(v.product_sold_per_day)} db/nap` : " · a napi eladáshoz még egy mérés kell (kb. 1 nap)")) : null,
+          v.product_checked_at ? el("span", {class: "cat"}, "Ár és eladás frissítve: " + ago(v.product_checked_at)) : el("span", {class: "cat"}, "Az árat és az eladást a következő mérés olvassa be."),
           el("a", {href: v.product_url, target: "_blank", rel: "noopener"}, "Megnyitás a TikTok Shopban ↗")) : null,
         el("div", {class:"note"}, `Átlag a feltöltés óta: ${nf(v.avg_views_per_hour)} nézés/óra · Utolsó mérés óta: ${v.growth_pct_last_check == null ? "–" : String(v.growth_pct_last_check).replace(".", ",") + "%"} · Lájk: ${nf(v.likes)} · Komment: ${nf(v.comments)} · Forrás: ${v.source || "–"}`));
       box.append(sparkline(history(v.video_id), 900, 200, 8, true));
@@ -507,6 +516,12 @@ select json_build_object(
       pageMsg("Nem sikerült menteni a csillagot. " + errorText(err), true);
     }
     renderList(); renderTiles();
+  }
+  function fmtPrice(n) { return Number(n).toFixed(2); }
+  function priceText(v) {
+    if (v.product_price == null) return null;
+    const lo = Number(v.product_price), hi = Number(v.product_price_max ?? lo);
+    return hi > lo ? `$${fmtPrice(lo)}–${fmtPrice(hi)}` : `$${fmtPrice(lo)}`;
   }
   function metric(val, label) { return el("div", {class:"metric"}, el("b", {}, val), el("span", {}, label)); }
 
