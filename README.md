@@ -47,5 +47,6 @@ limit 50;
 
 ## Ha nem működik
 
-- **"No videos returned" / EmptyResponseException:** a TikTok blokkol. Ellenőrizd a proxyt, és frissítsd az `MS_TOKEN`-t.
-- **Hirtelen minden elromlik:** a TikTok változtatott valamit. Frissítsd a `TikTokApi` verziót a `requirements.txt`-ben a legújabbra.
+- **Diagnosztika:** Actions fül → "Diagnose TikTok access" → Run workflow. Végigpróbál több beállítást (böngésző, proxy, token), és az eredményt a `tiktok_watch.runs` táblába írja (`job = 'diagnose'`).
+- **"empty response" hiba:** a TikTok valószínűleg megint változtatott a kérések aláírásán. A `tiktok_patch.py` a 2026 októberi változást (X-Gnarly aláírás) kezeli. Ha újra elromlik, először nézd meg, van-e új TikTokApi verzió.
+- **Blokkolás:** ellenőrizd a proxyt, és frissítsd az `MS_TOKEN`-t.
