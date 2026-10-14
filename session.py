@@ -15,6 +15,24 @@ log = logging.getLogger("tiktok-watch")
 
 # Skipping images, video and fonts saves most of the proxy bandwidth; TikTok's API calls still work.
 SAVE_BANDWIDTH = ["image", "media", "font"]
+START_URL = "https://www.tiktok.com"
+NAV_TIMEOUT_MS = 90_000
+
+
+async def _patient_page(context):
+    """Open the start page without waiting for every resource.
+
+    TikTokApi's own first navigation waits for the full 'load' event with a fixed 30 s limit,
+    which a slow proxy exit IP can miss. The page only needs its scripts and cookies, so wait
+    for the HTML (domcontentloaded) with a longer limit instead.
+    """
+    from TikTokApi.stealth import stealth_async
+    page = await context.new_page()
+    await stealth_async(page)
+    page.set_default_navigation_timeout(NAV_TIMEOUT_MS)
+    page.set_default_timeout(NAV_TIMEOUT_MS)
+    await page.goto(START_URL, wait_until="domcontentloaded")
+    return page
 
 
 def setup_logging() -> None:
@@ -60,8 +78,9 @@ async def tiktok_session(headless: bool | None = None, browser: str | None = Non
                     proxies=[pw_proxy] if pw_proxy else None,
                     browser=browser,
                     suppress_resource_load_types=SAVE_BANDWIDTH,
-                    timeout=60000,
+                    timeout=NAV_TIMEOUT_MS,
                     context_options=context_options,
+                    page_factory=_patient_page,
                 )
                 started = True
                 yield api, req_proxy
