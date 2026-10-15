@@ -33,7 +33,7 @@ log = logging.getLogger("tiktok-watch")
 STATS: Counter = Counter()
 CATS: dict = {}
 CONCURRENCY = int(os.environ.get("SHOP_CONCURRENCY", "4"))
-MAX_PRODUCT_PAGES = int(os.environ.get("SHOP_MAX_PRODUCT_PAGES", "150"))
+MAX_PRODUCT_PAGES = int(os.environ.get("SHOP_MAX_PRODUCT_PAGES", "800"))
 
 PRODUCT_START = re.compile(r'\{"product_id":\s*"(\d{15,20})",\s*"title":\s*"')
 
@@ -156,7 +156,7 @@ async def scan_categories(cfg, conn, proxies) -> set[str]:
             continue
         db.upsert_shop_product(conn, p)
         if p["sold"] is not None:
-            db.add_product_snapshot(conn, p["product_id"], p["sold"], p["price"], p["price"])
+            db.add_product_snapshot(conn, p["product_id"], p["sold"], p["price"], p["price"], "listing")
         STATS["in_range"] += 1
     for cat in cfg.shop_categories:
         if cat in CATS:
@@ -166,8 +166,13 @@ async def scan_categories(cfg, conn, proxies) -> set[str]:
 
 
 async def refresh_missing(cfg, conn, proxies, seen_today: set[str]) -> None:
-    """Re-read units sold from the product page for promising products not listed today."""
-    todo = [r for r in db.shop_products_to_refresh(conn, cfg.shop_track_min_sold) if r[0] not in seen_today][:MAX_PRODUCT_PAGES]
+    """Read units sold from the product page of every promising product, listed today or not.
+
+    The category listing's units-sold number lags behind the product page (often by days), so the
+    daily sales of promising products always come from their product page. Pages are fetched from
+    GitHub's own IP first, so this costs no proxy bandwidth.
+    """
+    todo = db.shop_products_to_refresh(conn, cfg.shop_track_min_sold)[:MAX_PRODUCT_PAGES]
     if not todo:
         return
     gate = asyncio.Semaphore(CONCURRENCY)
@@ -187,7 +192,7 @@ async def refresh_missing(cfg, conn, proxies, seen_today: set[str]) -> None:
             continue
         db.save_shop_product_page(conn, pid, info)
         if info.get("sold") is not None:
-            db.add_product_snapshot(conn, pid, info["sold"], info.get("price_min"), info.get("price_max"))
+            db.add_product_snapshot(conn, pid, info["sold"], info.get("price_min"), info.get("price_max"), "page")
         STATS["product_pages"] += 1
     conn.commit()
 

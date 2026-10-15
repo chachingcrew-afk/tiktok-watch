@@ -144,7 +144,7 @@ def save_product(conn, product_id: str, info: dict) -> None:
              info.get("price_display"), info.get("sold"), product_id),
         )
         cur.execute(
-            "insert into tiktok_watch.product_snapshots (product_id, sold, price_min, price_max) values (%s,%s,%s,%s)",
+            "insert into tiktok_watch.product_snapshots (product_id, sold, price_min, price_max, source) values (%s,%s,%s,%s,'page')",
             (product_id, info.get("sold"), info.get("price_min"), info.get("price_max")),
         )
 
@@ -193,22 +193,24 @@ def upsert_shop_product(conn, p: dict) -> None:
         )
 
 
-def add_product_snapshot(conn, product_id: str, sold, price_min, price_max) -> None:
+def add_product_snapshot(conn, product_id: str, sold, price_min, price_max, source: str) -> None:
+    """source: 'listing' (category page) or 'page' (product page). The two report units sold
+    differently (the listing number lags), so sales per day only compares snapshots of one source."""
     with conn.cursor() as cur:
         cur.execute(
-            "insert into tiktok_watch.product_snapshots (product_id, sold, price_min, price_max) values (%s,%s,%s,%s)",
-            (product_id, sold, price_min, price_max),
+            "insert into tiktok_watch.product_snapshots (product_id, sold, price_min, price_max, source) values (%s,%s,%s,%s,%s)",
+            (product_id, sold, price_min, price_max, source),
         )
 
 
 def shop_products_to_refresh(conn, min_sold: int) -> list[tuple[str, str]]:
-    """Promising products (sold enough, seen in the last 2 weeks) not checked in the last 20 hours."""
+    """Promising products (sold enough, seen in the last 2 weeks) whose product page was not read in the last 10 hours."""
     with conn.cursor() as cur:
         cur.execute(
             "select product_id, url from tiktok_watch.shop_products"
             " where not hidden and url is not null and (coalesce(last_sold, 0) >= %s or starred)"
             "   and last_seen > now() - interval '14 days'"
-            "   and (last_checked is null or last_checked < now() - interval '10 hours')"
+            "   and (page_checked_at is null or page_checked_at < now() - interval '10 hours')"
             " order by starred desc, last_sold desc nulls last",
             (min_sold,),
         )
@@ -217,13 +219,13 @@ def shop_products_to_refresh(conn, min_sold: int) -> list[tuple[str, str]]:
 
 def touch_shop_product(conn, product_id: str) -> None:
     with conn.cursor() as cur:
-        cur.execute("update tiktok_watch.shop_products set last_checked = now() where product_id = %s", (product_id,))
+        cur.execute("update tiktok_watch.shop_products set last_checked = now(), page_checked_at = now() where product_id = %s", (product_id,))
 
 
 def save_shop_product_page(conn, product_id: str, info: dict) -> None:
     with conn.cursor() as cur:
         cur.execute(
-            "update tiktok_watch.shop_products set last_checked = now(),"
+            "update tiktok_watch.shop_products set last_checked = now(), page_checked_at = now(),"
             " last_sold = coalesce(%s, last_sold), price = coalesce(%s, price),"
             " price_original = coalesce(%s, price_original) where product_id = %s",
             (info.get("sold"), info.get("price_min"), info.get("price_original"), product_id),
