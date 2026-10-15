@@ -208,7 +208,7 @@ def shop_products_to_refresh(conn, min_sold: int) -> list[tuple[str, str]]:
             "select product_id, url from tiktok_watch.shop_products"
             " where not hidden and url is not null and (coalesce(last_sold, 0) >= %s or starred)"
             "   and last_seen > now() - interval '14 days'"
-            "   and (last_checked is null or last_checked < now() - interval '20 hours')"
+            "   and (last_checked is null or last_checked < now() - interval '10 hours')"
             " order by starred desc, last_sold desc nulls last",
             (min_sold,),
         )
