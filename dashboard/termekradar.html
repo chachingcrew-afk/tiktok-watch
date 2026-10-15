@@ -840,7 +840,7 @@ select json_build_object(
   function brandOf(p) {
     if (brandCache.has(p)) return brandCache.get(p);
     let hit = null;
-    const title = String(p.title || "").trim(), shop = normShop(p.shop_name);
+    const title = String(p.title || "").replace(/^(\s|【[^】]*】|\[[^\]]*\]|\([^)]*\))+/, ""), shop = normShop(p.shop_name); // skip "【Deal】" style prefixes
     for (const b of brandList()) {
       const nb = normShop(b);
       if (!nb) continue;
