@@ -240,9 +240,14 @@ def test_twins_by_title_and_shop():
         {"product_id": "1", "shop_name": "ABC Store", "phash": None, "words": words("Portable Neck Fan Bladeless Hands Free 3 Speeds USB Rechargeable")},
         {"product_id": "2", "shop_name": "Zolor", "phash": None, "words": words("Bladeless Portable Neck Fan, Hands Free, USB Rechargeable 3 Speeds")},
         {"product_id": "3", "shop_name": "abc-store", "phash": None, "words": words("Portable Neck Fan Bladeless Hands Free 3 Speeds USB Rechargeable")},
-        {"product_id": "4", "shop_name": "Other", "phash": 5, "words": words("Garlic press")},
-        {"product_id": "5", "shop_name": "Else", "phash": 7, "words": words("Shower head")},
+        {"product_id": "4", "shop_name": "Other", "hash": 5, "words": words("Garlic press stainless steel crusher")},
+        {"product_id": "5", "shop_name": "Else", "hash": 7, "words": words("Garlic press crusher for kitchen")},
+        {"product_id": "6", "shop_name": "Third", "hash": 5, "words": words("Hair growth oil rosemary bottle")},
+        {"product_id": "7", "shop_name": "VEVOR Store", "hash": None, "words": words("Portable Neck Fan Bladeless Hands Free 3 Speeds USB Rechargeable")},
+        {"product_id": "8", "shop_name": "VEVOR Home Store", "hash": None, "words": words("Portable Neck Fan Bladeless Hands Free 3 Speeds USB Rechargeable")},
     ]
     t = find_twins(ps)
-    assert t["1"] == {"Zolor"} and t["2"] == {"ABC Store", "abc-store"}
-    assert t["4"] == {"Else"}  # images 1 bit apart
+    assert {"Zolor", "VEVOR Store", "VEVOR Home Store"} <= t["1"] and "abc-store" not in t["1"]
+    assert "VEVOR Home Store" not in t["7"]          # one seller's shops are not "other shops"
+    assert t["4"] == {"Else"}                         # same photo + related title
+    assert "Third" not in t["4"] and not t["6"]      # same photo, unrelated title
