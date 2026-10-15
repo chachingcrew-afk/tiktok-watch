@@ -28,8 +28,11 @@ from fetch_product import _unescape
 from fetch_video import HEADERS
 
 log = logging.getLogger("tiktok-watch")
-GALLERY_MAX = int(os.environ.get("GALLERY_MAX", "8"))
-GALLERY_PER_RUN = int(os.environ.get("GALLERY_PER_RUN", "400"))
+GALLERY_MAX = int(os.environ.get("GALLERY_MAX", "6"))
+GALLERY_PER_RUN = int(os.environ.get("GALLERY_PER_RUN", "300"))
+# Full galleries only for products that already sell well (or that you starred), to keep the
+# free database small. Every product still gets a thumbnail.
+GALLERY_MIN_SOLD = int(os.environ.get("GALLERY_MIN_SOLD", "1000"))
 THUMBS_PER_RUN = int(os.environ.get("THUMBS_PER_RUN", "1500"))
 WORKERS = int(os.environ.get("GALLERY_WORKERS", "6"))
 IMG_HEADERS = {"User-Agent": HEADERS["User-Agent"], "Referer": "https://shop.tiktok.com/", "Accept": "image/webp,image/*,*/*;q=0.8"}
@@ -123,7 +126,7 @@ def run(conn, min_sold: int, proxies: dict | None, stats) -> None:
     conn.commit()
 
     # 2) galleries for promising products that do not have one yet
-    todo = db.products_without_gallery(conn, min_sold, GALLERY_PER_RUN)
+    todo = db.products_without_gallery(conn, max(min_sold, GALLERY_MIN_SOLD), GALLERY_PER_RUN)
 
     def one(row):
         pid, url = row
@@ -141,7 +144,7 @@ def run(conn, min_sold: int, proxies: dict | None, stats) -> None:
             return pid, None
         imgs = []
         for u in gallery_urls(html)[:GALLERY_MAX]:
-            data = fetch_image(sized(u, 360))
+            data = fetch_image(sized(u, 320))
             if data:
                 imgs.append(b64(data))
         return pid, imgs
@@ -159,7 +162,7 @@ def run(conn, min_sold: int, proxies: dict | None, stats) -> None:
     conn.commit()
 
     # 3) keep the database small: drop galleries of products nobody will look at again
-    stats["galleries_removed"] += db.prune_galleries(conn)
+    stats["galleries_removed"] += db.prune_galleries(conn, max(min_sold, GALLERY_MIN_SOLD))
     conn.commit()
 
 

@@ -279,17 +279,15 @@ def mark_gallery(conn, product_id: str, count: int) -> None:
                     (count, product_id))
 
 
-def prune_galleries(conn) -> int:
-    """Remove galleries of hidden products and of products not seen for 30 days (starred ones stay)."""
+def prune_galleries(conn, min_sold: int) -> int:
+    """Remove galleries nobody will look at again: hidden products, products not listed for 10 days,
+    and products selling less than min_sold. Starred products always keep theirs."""
+    cond = ("not p.starred and (p.hidden or p.last_seen < now() - interval '10 days'"
+            " or coalesce(p.last_sold, 0) < %s)")
     with conn.cursor() as cur:
-        cur.execute(
-            "delete from tiktok_watch.shop_product_images i using tiktok_watch.shop_products p"
-            " where p.product_id = i.product_id and not p.starred and (p.hidden or p.last_seen < now() - interval '30 days')"
-        )
+        cur.execute("delete from tiktok_watch.shop_product_images i using tiktok_watch.shop_products p"
+                    " where p.product_id = i.product_id and " + cond, (min_sold,))
         n = cur.rowcount
-        cur.execute(
-            "update tiktok_watch.shop_products set gallery_at = null, gallery_count = null"
-            " where gallery_count > 0 and not starred and (hidden or last_seen < now() - interval '30 days')"
-            "   and not exists (select 1 from tiktok_watch.shop_product_images i where i.product_id = shop_products.product_id)"
-        )
+        cur.execute("update tiktok_watch.shop_products p set gallery_at = null, gallery_count = null"
+                    " where gallery_count > 0 and " + cond, (min_sold,))
         return n

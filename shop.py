@@ -34,6 +34,7 @@ STATS: Counter = Counter()
 CATS: dict = {}
 CONCURRENCY = int(os.environ.get("SHOP_CONCURRENCY", "4"))
 MAX_PRODUCT_PAGES = int(os.environ.get("SHOP_MAX_PRODUCT_PAGES", "800"))
+PAGE_BUDGET_S = int(os.environ.get("SHOP_PAGE_BUDGET_S", "1200"))  # at most 20 minutes of product pages per run
 
 PRODUCT_START = re.compile(r'\{"product_id":\s*"(\d{15,20})",\s*"title":\s*"')
 
@@ -176,25 +177,33 @@ async def refresh_missing(cfg, conn, proxies, seen_today: set[str]) -> None:
     if not todo:
         return
     gate = asyncio.Semaphore(CONCURRENCY)
+    deadline = time.monotonic() + PAGE_BUDGET_S
 
     async def one(pid, url):
         async with gate:
-            await asyncio.sleep(random.uniform(0.3, 1.5))
+            if time.monotonic() > deadline:
+                return pid, None  # out of time for today; picked up first tomorrow
+            await asyncio.sleep(random.uniform(0.2, 0.8))
             try:
-                return await asyncio.to_thread(fetch_product, url, pid, proxies, 2)
+                return pid, await asyncio.to_thread(fetch_product, url, pid, proxies, 2, 20)
             except Exception as e:
-                return e
+                return pid, e
 
-    for (pid, url), info in zip(todo, await asyncio.gather(*(one(pid, url) for pid, url in todo))):
+    # save each page as soon as it arrives, so a slow or interrupted run keeps what it read
+    for fut in asyncio.as_completed([one(pid, url) for pid, url in todo]):
+        pid, info = await fut
+        if info is None:
+            STATS["product_pages_skipped"] += 1
+            continue
         if isinstance(info, Exception):
             STATS["product_page_errors"] += 1
             db.touch_shop_product(conn, pid)
-            continue
-        db.save_shop_product_page(conn, pid, info)
-        if info.get("sold") is not None:
-            db.add_product_snapshot(conn, pid, info["sold"], info.get("price_min"), info.get("price_max"), "page")
-        STATS["product_pages"] += 1
-    conn.commit()
+        else:
+            db.save_shop_product_page(conn, pid, info)
+            if info.get("sold") is not None:
+                db.add_product_snapshot(conn, pid, info["sold"], info.get("price_min"), info.get("price_max"), "page")
+            STATS["product_pages"] += 1
+        conn.commit()
 
 
 async def main() -> None:
