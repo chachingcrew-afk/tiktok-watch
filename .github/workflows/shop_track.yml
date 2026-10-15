@@ -1,0 +1,27 @@
+name: Check TikTok Shop sales (every 6 hours)
+
+on:
+  schedule:
+    # 00:41, 12:41 and 18:41 UTC; the 06:xx slot is covered by the daily shop scan
+    - cron: '41 0,12,18 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: tiktok-watch
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python shop_track.py
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PROXY_URL: ${{ secrets.PROXY_URL }}

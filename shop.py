@@ -33,7 +33,7 @@ from session import setup_logging
 log = logging.getLogger("tiktok-watch")
 STATS: Counter = Counter()
 CATS: dict = {}
-CONCURRENCY = int(os.environ.get("SHOP_CONCURRENCY", "4"))
+CONCURRENCY = int(os.environ.get("SHOP_CONCURRENCY", "6"))
 MAX_PRODUCT_PAGES = int(os.environ.get("SHOP_MAX_PRODUCT_PAGES", "800"))
 PAGE_BUDGET_S = int(os.environ.get("SHOP_PAGE_BUDGET_S", "1200"))  # at most 20 minutes of product pages per run
 
@@ -174,7 +174,11 @@ async def refresh_missing(cfg, conn, proxies, seen_today: set[str]) -> None:
     daily sales of promising products always come from their product page. Pages are fetched from
     GitHub's own IP first, so this costs no proxy bandwidth.
     """
-    todo = db.shop_products_to_refresh(conn, cfg.shop_track_min_sold)[:MAX_PRODUCT_PAGES]
+    await read_pages(conn, proxies, db.shop_products_to_refresh(conn, cfg.shop_track_min_sold)[:MAX_PRODUCT_PAGES])
+
+
+async def read_pages(conn, proxies, todo: list[tuple[str, str]]) -> None:
+    """Read units sold and price from each product page and store a 'page' snapshot."""
     if not todo:
         return
     gate = asyncio.Semaphore(CONCURRENCY)

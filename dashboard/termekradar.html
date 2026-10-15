@@ -577,7 +577,7 @@ select json_build_object(
  'shop', (select coalesce(json_agg(t), '[]'::json) from (
     select product_id, title, url, image, category_id, category_name, shop_name, price, price_original, rating, reviews,
            coalesce(sold_now, last_sold) as sold_now, sold_checked_at, sold_per_day, sold_per_day_week, revenue_per_day,
-           growth_pct, sold_per_day_prev, trend,
+           growth_pct, sold_per_day_prev, trend, sold_per_day_recent,
            (select sp.gallery_count from tiktok_watch.shop_products sp where sp.product_id = v.product_id) as gallery_count,
            (select sp.other_shops from tiktok_watch.shop_products sp where sp.product_id = v.product_id) as other_shops,
            (select sp.twin_shops from tiktok_watch.shop_products sp where sp.product_id = v.product_id) as twin_shops,
@@ -585,7 +585,7 @@ select json_build_object(
     from tiktok_watch.shop_product_scores v where last_seen > now() - interval '21 days' or starred
     order by hidden, revenue_per_day desc nulls last, last_sold desc nulls last limit 1000) t),
  'runs', (select coalesce(json_agg(r), '[]'::json) from (
-    select id, job, started_at, finished_at, ok, stats, error from tiktok_watch.runs where job in ('collect','track','shop') order by started_at desc limit 30) r),
+    select id, job, started_at, finished_at, ok, stats, error from tiktok_watch.runs where job in ('collect','track','shop','shop_track') order by started_at desc limit 30) r),
  'settings', (select coalesce(json_object_agg(key, value), '{}'::json) from tiktok_watch.settings)
 ) as data`;
 
@@ -1059,6 +1059,7 @@ select json_build_object(
           kvItem(p.revenue_per_day != null ? money(p.revenue_per_day) : "–", p.revenue_per_day != null ? "bevétel naponta" : "napi bevétel holnaptól", isWin(p) ? "grow" : ""),
           kvItem(p.sold_per_day != null ? "+" + nf(p.sold_per_day) : "–", "eladás naponta"),
           kvItem(p.sold_per_day_week != null ? "+" + nf(p.sold_per_day_week) : "–", "napi átlag a hét alatt"),
+          kvItem(p.sold_per_day_recent != null ? "+" + nf(p.sold_per_day_recent) : "–", p.sold_per_day_recent != null ? "mostani tempó (utolsó ~6 óra, napra vetítve)" : "6 órás tempó a következő mérés után", p.sold_per_day_recent != null && p.sold_per_day != null && Number(p.sold_per_day_recent) > Number(p.sold_per_day) * 1.2 ? "heat" : ""),
           kvItem(monthly != null ? money(monthly) : "–", "becsült havi bevétel"),
           kvItem(p.sold_now != null ? nf(p.sold_now) : "–", "eladva összesen"),
           kvItem(p.first_seen ? ago(p.first_seen) : "–", "óta figyeljük"),
@@ -1157,17 +1158,17 @@ select json_build_object(
       const s = r.stats || {};
       const mins = r.finished_at ? Math.max(1, Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 60000)) + " perc" : "fut";
       const st = !r.finished_at ? el("span", { class: "badge heat" }, "fut") : r.ok ? el("span", { class: "badge grow" }, "rendben") : el("span", { class: "badge", style: "background:var(--bad-soft);color:var(--bad)" }, "hiba");
-      const isCollect = r.job === "collect", isShop = r.job === "shop";
-      const seen = isCollect || isShop ? s.seen : (s.tracking || 0) + (s.dropped || 0) + (s.expired || 0) + (s.failed || 0);
-      const made = isCollect ? s.ok : isShop ? s.in_range : s.tracking;
+      const isCollect = r.job === "collect", isShop = r.job === "shop", isShopTrack = r.job === "shop_track";
+      const seen = isShopTrack ? s.selected : isCollect || isShop ? s.seen : (s.tracking || 0) + (s.dropped || 0) + (s.expired || 0) + (s.failed || 0);
+      const made = isShopTrack ? s.product_pages : isCollect ? s.ok : isShop ? s.in_range : s.tracking;
       const feeds = isShop ? s.categories : s.feeds;
       const hasFeeds = (isCollect || isShop) && feeds && Object.keys(feeds).length;
       const open = view.openRun === r.id;
       body.push(el("tr", { class: hasFeeds || r.error ? "clickable" : null, onclick: hasFeeds || r.error ? () => { view.openRun = open ? null : r.id; renderRuns(); } : null },
-        el("td", {}, (hasFeeds || r.error ? (open ? "▾ " : "▸ ") : "") + (isShop ? "Termékkeresés" : isCollect ? "Gyűjtés" : "Mérés")),
+        el("td", {}, (hasFeeds || r.error ? (open ? "▾ " : "▸ ") : "") + (isShopTrack ? "Eladásmérés" : isShop ? "Termékkeresés" : isCollect ? "Gyűjtés" : "Mérés")),
         el("td", {}, when(r.started_at)), el("td", {}, mins), el("td", {}, st),
         el("td", { class: "r" }, nf(seen || 0)), el("td", { class: "r" }, nf(made || 0)),
-        el("td", { class: "r" }, isShop ? (s.product_pages || s.product_page_errors ? `${nf(s.product_pages || 0)}${s.product_page_errors ? " / " + nf(s.product_page_errors) + " hiba" : ""}` : "–")
+        el("td", { class: "r" }, isShop || isShopTrack ? (s.product_pages || s.product_page_errors ? `${nf(s.product_pages || 0)}${s.product_page_errors ? " / " + nf(s.product_page_errors) + " hiba" : ""}` : "–")
           : s.product_ok || s.product_failed ? `${nf(s.product_ok || 0)}${s.product_failed ? " / " + nf(s.product_failed) + " hiba" : ""}` : "–"),
         el("td", { class: "r" }, nf((s.feed_errors || 0) + (s.failed || 0) + (s.category_errors || 0) + (s.product_page_errors || 0)))));
       if (open) {
