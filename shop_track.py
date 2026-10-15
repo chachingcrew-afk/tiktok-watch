@@ -1,8 +1,8 @@
-"""6-hourly sales check of the most promising TikTok Shop products.
+"""6-hourly sales check of every TikTok Shop product in the price band (and starred ones).
 
 The daily shop scan (shop.py) finds products and reads every promising product page once a day.
-Between those runs this job re-reads the product pages of starred products and of the fastest
-sellers in the price band, so their sales curve has a point every 6 hours. Pages are fetched from
+Between those runs this job re-reads the product pages of all of them, starred and fastest
+sellers first, so every sales curve has a point every 6 hours. Pages are fetched from
 GitHub's own IP first, so this normally costs no proxy bandwidth.
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ from core import Config, proxy_settings
 from session import setup_logging
 
 log = logging.getLogger("tiktok-watch")
-LIMIT = int(os.environ.get("SHOP_6H_LIMIT", "300"))
+LIMIT = int(os.environ.get("SHOP_6H_LIMIT", "3000"))
 
 
 async def main() -> None:

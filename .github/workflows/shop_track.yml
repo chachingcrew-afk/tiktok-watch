@@ -25,3 +25,4 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           PROXY_URL: ${{ secrets.PROXY_URL }}
+          SHOP_CONCURRENCY: '12'
