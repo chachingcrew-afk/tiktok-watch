@@ -414,6 +414,15 @@ tr.clickable:hover td { background: var(--sunken); }
             <div class="field"><label for="s-shop_track_min_sold">Napi követés ennyi eladástól</label><input type="number" id="s-shop_track_min_sold" min="0" step="50"><small>Ha egy termék aznap nem jelenik meg a kategóriában, a saját oldaláról olvassa újra az eladást.</small></div>
           </div>
           <div class="field">
+            <span class="lbl">Ismert márkák</span>
+            <div class="tags" id="brands"></div>
+            <div class="tagadd">
+              <input type="text" id="brand-input" placeholder="Márkanév, pl. VEVOR" autocomplete="off" aria-label="Új márka">
+              <button class="btn" type="button" id="brand-add">Hozzáadás</button>
+            </div>
+            <small>Ezeknek a márkáknak a termékei „Márkás” jelölést kapnak, és kimaradnak a többi listából. Akkor számít, ha a terméknév ezzel kezdődik, vagy a bolt neve ez.</small>
+          </div>
+          <div class="field">
             <span class="lbl">Kategóriák</span>
             <div class="tags" id="cats"></div>
             <div class="tagadd">
@@ -483,7 +492,11 @@ tr.clickable:hover td { background: var(--sunken); }
   const KEYS_BOOL = ["include_trending","require_product_signal","require_shop_product"];
   const LIMITS = { videos_per_hashtag:[10,1000], trending_count:[0,1000], max_age_days:[1,30], min_views:[0,1e9], min_avg_views_per_hour:[0,1e8], drop_below_views_per_hour:[0,1e8], min_snapshots_before_drop:[2,20], min_product_price:[0,10000],
     shop_min_price:[0,10000], shop_max_price:[1,10000], shop_min_revenue_day:[0,1e7], shop_fetches_per_category:[1,10], shop_track_min_sold:[0,1e9] };
-  const SHOP_SEGMENTS = [["all", "Ársávban"], ["win", "Nyerő"], ["rising", "Felfutó"], ["accel", "Gyorsul"], ["starred", "Csillagos"], ["new", "Új ma"], ["hidden", "Elrejtett"]];
+  const SHOP_SEGMENTS = [["all", "Ársávban"], ["win", "Nyerő"], ["rising", "Felfutó"], ["accel", "Gyorsul"], ["multi", "Több boltnál"], ["starred", "Csillagos"], ["new", "Új ma"], ["brand", "Márkás"], ["hidden", "Elrejtett"]];
+  // Established brands that design and manufacture their own products (not dropshippable).
+  // A brand counts when the title starts with it or the shop is named after it, so "case for Apple Watch" is not flagged.
+  const DEFAULT_BRANDS = ["VEVOR","Merach","Anker","Soundcore","eufy","Ninja","Shark","SharkNinja","Dyson","Bissell","Hoover","iRobot","Roborock","Tineco","Keurig","Cuisinart","KitchenAid","Hamilton Beach","Instant Pot","Instant","COSORI","Chefman","BLACK+DECKER","DEWALT","Milwaukee","Makita","Ryobi","Bosch","Philips","Braun","Oral-B","Waterpik","Conair","Revlon","Remington","Wahl","Andis","BaBylissPRO","Laifen","Panasonic","Samsung","Apple","JBL","Sony","Bose","Beats","Logitech","Garmin","Fitbit","Coleman","YETI","Stanley","Hydro Flask","Owala","Lodge","OXO","Rubbermaid","Sunbeam","Igloo","Theragun","Therabody","Hyperice","RENPHO","Bowflex","Gorilla Grip","Amazon Basics","LEGO","Hasbro","Mattel","Nerf","Fisher-Price","Crayola","Furbo","PetSafe","Cricut","BlendJet","Medicube","Govee","TP-Link","Ring","Blink","Wyze","Ecovacs","Dreame","Xiaomi","Ugreen","Baseus","Belkin","OtterBox","Spigen","Casetify","Shokz","Soundpeats","Sterilite","Mueller","Gourmia","Bella","Dash","Bear","AquaSonic","Snow","Crest","Sol de Janeiro","CeraVe","Olaplex","T3","GHD"];
+  const BRAND_AMBIGUOUS = new Set(["Dash","Bear","Snow","Instant","Ring","Bella"]); // only count these when the shop itself carries the name
   const RISING_PCT = 5;
   const SEGMENTS = [
     ["tracking", "Követett"], ["accel", "Gyorsul"], ["starred", "Csillagos"], ["out", "Kiesett"], ["hidden", "Elrejtett"]
@@ -508,7 +521,7 @@ tr.clickable:hover td { background: var(--sunken); }
   }
   const store = { get(k) { try { return localStorage.getItem("radar-" + k); } catch (_) { return null; } }, set(k, v) { try { localStorage.setItem("radar-" + k, v); } catch (_) {} } };
 
-  let mcp = null, loading = false, tags = [], cats = [], dirty = false;
+  let mcp = null, loading = false, tags = [], cats = [], brands = [], dirty = false;
   let state = { videos: [], shop: [], history: {}, phist: {}, runs: [], settings: {} };
   const thumbs = {}, galleries = {}, galleryLoading = {};
   let galIdx = 0;
@@ -566,6 +579,8 @@ select json_build_object(
            coalesce(sold_now, last_sold) as sold_now, sold_checked_at, sold_per_day, sold_per_day_week, revenue_per_day,
            growth_pct, sold_per_day_prev, trend,
            (select sp.gallery_count from tiktok_watch.shop_products sp where sp.product_id = v.product_id) as gallery_count,
+           (select sp.other_shops from tiktok_watch.shop_products sp where sp.product_id = v.product_id) as other_shops,
+           (select sp.twin_shops from tiktok_watch.shop_products sp where sp.product_id = v.product_id) as twin_shops,
            first_seen, last_seen, starred, hidden
     from tiktok_watch.shop_product_scores v where last_seen > now() - interval '21 days' or starred
     order by hidden, revenue_per_day desc nulls last, last_sold desc nulls last limit 1000) t),
@@ -818,11 +833,32 @@ select json_build_object(
   const inBand = (p) => p.price != null && Number(p.price) >= shopSet("shop_min_price") && Number(p.price) <= shopSet("shop_max_price");
   const isWin = (p) => Number(p.revenue_per_day) >= shopSet("shop_min_revenue_day");
   const isNewToday = (p) => p.first_seen && (Date.now() - new Date(p.first_seen).getTime()) < 30 * 3600e3;
+  let brandCache = new WeakMap();
+  const brandList = () => (Array.isArray(state.settings && state.settings.known_brands) && state.settings.known_brands.length ? state.settings.known_brands : DEFAULT_BRANDS);
+  const normShop = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const reEsc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  function brandOf(p) {
+    if (brandCache.has(p)) return brandCache.get(p);
+    let hit = null;
+    const title = String(p.title || "").trim(), shop = normShop(p.shop_name);
+    for (const b of brandList()) {
+      const nb = normShop(b);
+      if (!nb) continue;
+      const shopHit = !!shop && (shop === nb || shop === nb + "official" || shop === nb + "officialstore" || shop === nb + "store" || shop === nb + "us" || shop === nb + "usa" || shop === nb + "direct");
+      const titleHit = !BRAND_AMBIGUOUS.has(b) && new RegExp("^" + reEsc(b) + "(?![a-z0-9])", "i").test(title);
+      if (shopHit || titleHit) { hit = b; break; }
+    }
+    brandCache.set(p, hit);
+    return hit;
+  }
   function shopFilter(seg) {
     return (p) => {
       if (seg === "hidden") return p.hidden;
       if (p.hidden) return false;
       if (seg === "starred") return p.starred;
+      if (seg === "brand") return !!brandOf(p);
+      if (brandOf(p)) return false;
+      if (seg === "multi") return Number(p.other_shops) > 0 && (inBand(p) || p.starred);
       if (!inBand(p) && !p.starred) return false;
       if (seg === "win") return isWin(p);
       if (seg === "new") return isNewToday(p);
@@ -842,7 +878,7 @@ select json_build_object(
   }
   function renderShopAll() { renderShopSummary(); renderShopSeg(); renderShopCats(); renderShopList(); }
   function renderShopSummary() {
-    const live = state.shop.filter(p => !p.hidden && inBand(p));
+    const live = state.shop.filter(p => !p.hidden && inBand(p) && !brandOf(p));
     const measured = live.filter(p => p.sold_per_day != null);
     const wins = live.filter(isWin).length;
     const best = Math.max(0, ...live.map(p => Number(p.revenue_per_day) || 0));
@@ -861,7 +897,7 @@ select json_build_object(
   function renderShopSeg() {
     $("shop-seg").replaceChildren(...SHOP_SEGMENTS.map(([key, label]) => {
       const n = state.shop.filter(shopFilter(key)).length;
-      const tips = { win: `Legalább $${nf(shopSet("shop_min_revenue_day"))} bevétel naponta`, rising: `Naponta legalább ${RISING_PCT}%-kal nő az eddigi eladásokhoz képest`, accel: "Ma gyorsabban fogy, mint előző nap" };
+      const tips = { brand: "Ismert márkák saját termékei, ezek nem dropshippelhetők. A többi listából kimaradnak.", multi: "Ugyanezt a terméket más bolt is árulja (azonos kép vagy szinte azonos név): közös gyárból jöhet, valószínűleg beszerezhető.", win: `Legalább $${nf(shopSet("shop_min_revenue_day"))} bevétel naponta`, rising: `Naponta legalább ${RISING_PCT}%-kal nő az eddigi eladásokhoz képest`, accel: "Ma gyorsabban fogy, mint előző nap" };
       return el("button", { type: "button", "aria-pressed": String(sview.seg === key), title: tips[key] || null,
         onclick: () => { sview.seg = key; store.set("sseg", key); renderShopSeg(); renderShopList(true); } }, label, el("em", {}, n));
     }));
@@ -887,6 +923,8 @@ select json_build_object(
         starred: ["Még nincs csillagozott termék", "A ☆ jellel jelöld meg, ami tetszik. A csillagos termékek eladását akkor is méri, ha kikerülnek a kategórialistából."],
         rising: ["Még nincs felfutó termék", state.shop.some(p => p.growth_pct != null) ? `Egyik termék sem nő naponta ${RISING_PCT}%-nál gyorsabban az eddigi eladásaihoz képest.` : "A növekedéshez két egymást követő nap eladása kell, ez a holnap reggeli futás után jelenik meg."],
         accel: ["Most semmi nem gyorsul", "A gyorsuláshoz három nap mérés kell: a mai napi eladást veti össze az előző napival."],
+        brand: ["Nincs márkás termék", "Az ismert márkák listáját a Beállításokban bővítheted."],
+        multi: ["Még nincs több boltnál látott termék", "Ehhez ugyanannak a terméknek több boltnál is fel kell bukkannia a kategórialistákban. Napról napra több lesz."],
         new: ["Ma nem jött új termék", "Az utolsó futás nem talált olyan terméket, ami korábban nem volt meg."],
         hidden: ["Nincs elrejtett termék", "Amit elrejtesz, ide kerül, és innen vissza is állíthatod."],
       };
@@ -974,7 +1012,8 @@ select json_build_object(
       el("div", { class: "c-star" }, shopStar(p)),
       thumb(p),
       el("div", { class: "c-prod", style: "min-width:0" }, el("div", { class: "p-title" }, p.title || "Névtelen termék"),
-        el("div", { class: "p-sub" }, [p.category_name, p.shop_name].filter(Boolean).join(" · "), p.rating ? `  ★ ${dec(p.rating)}` : "")),
+        el("div", { class: "p-sub" }, brandOf(p) ? el("span", { class: "badge off" }, "Márkás") : null, Number(p.other_shops) > 0 ? el("span", { class: "badge grow", title: (p.twin_shops || []).join(", ") }, `${Number(p.other_shops) + 1} boltnál`) : null,
+          (brandOf(p) || Number(p.other_shops) > 0 ? " " : "") + [p.category_name, p.shop_name].filter(Boolean).join(" · "), p.rating ? `  ★ ${dec(p.rating)}` : "")),
       el("div", { class: "c-grow r" }, p.growth_pct != null ? el("div", { class: "grow-main" + (Number(p.growth_pct) >= RISING_PCT ? " hot" : "") }, "+" + pct(p.growth_pct)) : el("div", { class: "pending" }, "holnaptól"),
         trendBadge(p) || (p.growth_pct != null ? el("div", { class: "num-sub" }, "naponta") : null)),
       el("div", { class: "c-rev r" }, rev != null ? el("div", { class: "rev-main" + (isWin(p) ? " win" : "") }, money(rev)) : el("div", { class: "pending" }, "holnaptól"),
@@ -1010,7 +1049,10 @@ select json_build_object(
           el("button", { type: "button", class: "btn" + (p.starred ? " star-on" : ""), onclick: () => shopToggleStar(p) }, p.starred ? "★ Csillagozva" : "☆ Csillagozás"),
           p.hidden ? el("button", { type: "button", class: "btn", onclick: () => shopSetHidden(p, false) }, "Visszaállítás")
                    : el("button", { type: "button", class: "btn danger", onclick: () => shopSetHidden(p, true) }, "Elrejtés"),
-          p.url ? el("a", { class: "btn", href: p.url, target: "_blank", rel: "noopener" }, "TikTok Shop ↗") : null)),
+          p.url ? el("a", { class: "btn", href: p.url, target: "_blank", rel: "noopener" }, "TikTok Shop ↗") : null,
+          p.image ? el("a", { class: "btn", href: "https://lens.google.com/uploadbyurl?url=" + encodeURIComponent(p.image), target: "_blank", rel: "noopener", title: "Képkeresés a termék fő képével: kik árulják még, például AliExpressen" }, "Hol árulják még? ↗") : null),
+        brandOf(p) ? el("div", { class: "d-note" }, `Ismert márka (${brandOf(p)}): saját tervezésű és gyártású termék, nem dropshippelhető.`) : null,
+        Number(p.other_shops) > 0 ? el("div", { class: "d-note" }, `Ugyanezt a terméket ${Number(p.other_shops)} másik bolt is árulja: ${(p.twin_shops || []).join(", ")}. Valószínűleg közös gyárból jön, tehát beszerezhető.`) : null),
       el("div", { class: "d-sec" },
         el("h3", {}, "Eladás", el("span", {}, p.sold_checked_at ? "mérve " + ago(p.sold_checked_at) : "")),
         el("div", { class: "kv" },
@@ -1151,6 +1193,8 @@ select json_build_object(
     for (const k of KEYS_INT) { const v = s[k] != null ? s[k] : SHOP_DEFAULTS[k]; if (v != null) $("s-" + k).value = v; }
     cats = Array.isArray(s.shop_categories) ? s.shop_categories.slice() : [];
     renderCats();
+    brands = Array.isArray(s.known_brands) && s.known_brands.length ? s.known_brands.slice() : DEFAULT_BRANDS.slice();
+    renderBrands();
     for (const k of KEYS_BOOL) if (s[k] != null) $("s-" + k).checked = !!s[k];
     tags = Array.isArray(s.hashtags) ? s.hashtags.slice() : [];
     renderTags();
@@ -1193,9 +1237,22 @@ select json_build_object(
     $("cat-input").value = ""; renderCats(); if (added) markDirty();
   }
   $("cat-add").addEventListener("click", addCat);
+  function renderBrands() {
+    $("brands").replaceChildren(...brands.map((b, i) => el("span", { class: "tag cat" }, b,
+      el("button", { type: "button", "aria-label": b + " törlése", onclick: () => { brands.splice(i, 1); renderBrands(); markDirty(); } }, "×"))));
+  }
+  function addBrand() {
+    let added = false;
+    for (const part of $("brand-input").value.split(",").map(x => x.trim()).filter(Boolean)) {
+      if (!brands.some(b => b.toLowerCase() === part.toLowerCase())) { brands.push(part.slice(0, 40)); added = true; }
+    }
+    $("brand-input").value = ""; renderBrands(); if (added) markDirty();
+  }
+  $("brand-add").addEventListener("click", addBrand);
+  $("brand-input").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addBrand(); } });
   $("cat-input").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addCat(); } });
   $("tag-input").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addTag(); } });
-  $("settings-form").addEventListener("input", (e) => { if (e.target.id !== "tag-input" && e.target.id !== "cat-input") markDirty(); });
+  $("settings-form").addEventListener("input", (e) => { if (!["tag-input", "cat-input", "brand-input"].includes(e.target.id)) markDirty(); });
 
   $("settings-form").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -1215,12 +1272,14 @@ select json_build_object(
     if (vals.shop_min_price >= vals.shop_max_price) { note.textContent = "A minimum ár legyen kisebb a maximum árnál."; $("s-shop_min_price").focus(); return; }
     if (!cats.length) { note.textContent = "Legalább egy TikTok Shop kategória kell."; return; }
     vals.shop_categories = cats.slice();
+    vals.known_brands = brands.slice();
     const rows = Object.entries(vals).map(([k, v]) => `('${k}', $j$${JSON.stringify(v)}$j$::jsonb, now())`).join(",\n");
     const q = `insert into tiktok_watch.settings (key, value, updated_at) values\n${rows}\non conflict (key) do update set value = excluded.value, updated_at = now()\nreturning key`;
     $("save").disabled = true; $("save").textContent = "Mentés…";
     try {
       await sql(q);
       state.settings = Object.assign({}, state.settings, vals);
+      brandCache = new WeakMap();
       renderShopAll();
       dirty = false; $("savebar").classList.remove("dirty");
       note.textContent = "Mentve. A következő gyűjtésnél és mérésnél már ezekkel fut.";

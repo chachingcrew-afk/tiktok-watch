@@ -24,6 +24,7 @@ import requests
 import db
 import netstats
 import gallery
+import twins
 from core import Config, proxy_settings
 from fetch_product import _unescape, fetch_product
 from fetch_video import HEADERS
@@ -222,6 +223,12 @@ async def main() -> None:
             conn.rollback()
             STATS["gallery_failed"] += 1
             log.warning("Gallery step failed: %s", e)
+        try:
+            await asyncio.to_thread(twins.run, conn, STATS)
+        except Exception as e:  # a hint for the dashboard; never fail the scan because of it
+            conn.rollback()
+            STATS["twins_failed"] += 1
+            log.warning("Same-product step failed: %s", e)
     except BaseException as e:
         db.finish_run(conn, run_id, False, {**STATS, **netstats.summary(), "categories": CATS}, str(e))
         raise

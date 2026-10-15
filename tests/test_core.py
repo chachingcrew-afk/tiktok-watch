@@ -232,3 +232,17 @@ def test_gallery_urls_and_resize():
     assert len(urls) == 2 and urls[0].startswith("https://p16-oec") and "b3df927a" in urls[0]
     assert sized(urls[0], 360).count("~tplv-fhlh96nyum-resize-webp:360:360.webp?dr=1&t=2") == 1
     assert "crop-webp:96:96.webp" in sized("https://x/y~tplv-abc-crop-webp:2048:2048.webp?dr=1&amp;t=2", 96, crop=True)
+
+
+def test_twins_by_title_and_shop():
+    from twins import find_twins, words
+    ps = [
+        {"product_id": "1", "shop_name": "ABC Store", "phash": None, "words": words("Portable Neck Fan Bladeless Hands Free 3 Speeds USB Rechargeable")},
+        {"product_id": "2", "shop_name": "Zolor", "phash": None, "words": words("Bladeless Portable Neck Fan, Hands Free, USB Rechargeable 3 Speeds")},
+        {"product_id": "3", "shop_name": "abc-store", "phash": None, "words": words("Portable Neck Fan Bladeless Hands Free 3 Speeds USB Rechargeable")},
+        {"product_id": "4", "shop_name": "Other", "phash": 5, "words": words("Garlic press")},
+        {"product_id": "5", "shop_name": "Else", "phash": 7, "words": words("Shower head")},
+    ]
+    t = find_twins(ps)
+    assert t["1"] == {"Zolor"} and t["2"] == {"ABC Store", "abc-store"}
+    assert t["4"] == {"Else"}  # images 1 bit apart
