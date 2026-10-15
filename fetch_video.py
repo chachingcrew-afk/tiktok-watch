@@ -12,6 +12,10 @@ import time
 
 import requests
 
+import netstats
+
+DIRECT_FIRST = __import__('os').environ.get('DIRECT_FIRST', '1') == '1'
+
 USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36")
 HEADERS = {
@@ -61,7 +65,9 @@ def fetch_video(url: str, video_id: str, proxies: dict | None, attempts: int = 3
     last: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
-            r = requests.get(url, headers=HEADERS, proxies=proxies, timeout=timeout)
+            # first try GitHub's own IP (free); the paid proxy only if that fails
+            via = None if (attempt == 1 and proxies and DIRECT_FIRST) else proxies
+            r = netstats.get(url, headers=HEADERS, proxies=via, timeout=timeout)
             if r.status_code == 200:
                 return parse_video_page(r.text, video_id)
             if r.status_code in (404, 410):

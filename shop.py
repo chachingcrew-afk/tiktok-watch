@@ -22,6 +22,7 @@ from collections import Counter
 import requests
 
 import db
+import netstats
 import gallery
 from core import Config, proxy_settings
 from fetch_product import _unescape, fetch_product
@@ -107,7 +108,7 @@ def fetch_category(url: str, proxies: dict | None, attempts: int = 2) -> str:
             time.sleep(random.uniform(2, 4))
         try:
             # first try GitHub's own IP (free), then the proxy
-            r = requests.get(url, headers=HEADERS, proxies=proxies if attempt else None, timeout=30)
+            r = netstats.get(url, headers=HEADERS, proxies=proxies if attempt else None, timeout=30)
             if r.status_code == 200 and "productList" in r.text:
                 return r.text
             last = RuntimeError(f"HTTP {r.status_code}, no product list")
@@ -174,12 +175,10 @@ async def refresh_missing(cfg, conn, proxies, seen_today: set[str]) -> None:
     async def one(pid, url):
         async with gate:
             await asyncio.sleep(random.uniform(0.3, 1.5))
-            for prox in ([None, proxies] if proxies else [None]):
-                try:
-                    return await asyncio.to_thread(fetch_product, url, pid, prox, 2)
-                except Exception as e:
-                    err = e
-            return err
+            try:
+                return await asyncio.to_thread(fetch_product, url, pid, proxies, 2)
+            except Exception as e:
+                return e
 
     for (pid, url), info in zip(todo, await asyncio.gather(*(one(pid, url) for pid, url in todo))):
         if isinstance(info, Exception):
@@ -210,11 +209,11 @@ async def main() -> None:
             STATS["gallery_failed"] += 1
             log.warning("Gallery step failed: %s", e)
     except BaseException as e:
-        db.finish_run(conn, run_id, False, {**STATS, "categories": CATS}, str(e))
+        db.finish_run(conn, run_id, False, {**STATS, **netstats.summary(), "categories": CATS}, str(e))
         raise
     log.info("Done. %s", dict(STATS))
     ok = STATS["seen"] > 0
-    db.finish_run(conn, run_id, ok, {**STATS, "categories": CATS}, None if ok else "no products found in any category")
+    db.finish_run(conn, run_id, ok, {**STATS, **netstats.summary(), "categories": CATS}, None if ok else "no products found in any category")
     conn.close()
     if not ok:
         raise SystemExit("No products found. TikTok Shop may be blocking the category pages.")

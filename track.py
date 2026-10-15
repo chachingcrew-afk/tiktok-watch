@@ -9,6 +9,7 @@ from collections import Counter
 from datetime import datetime, timezone
 
 import db
+import netstats
 from core import Config, parse_video, proxy_settings, tracking_decision
 from fetch_product import fetch_product
 from fetch_video import fetch_video
@@ -29,9 +30,9 @@ async def main() -> None:
     try:
         await run(cfg, conn)
     except BaseException as e:
-        db.finish_run(conn, run_id, False, dict(STATS), str(e))
+        db.finish_run(conn, run_id, False, {**STATS, **netstats.summary()}, str(e))
         raise
-    db.finish_run(conn, run_id, True, dict(STATS))
+    db.finish_run(conn, run_id, True, {**STATS, **netstats.summary()})
     conn.close()
 
 

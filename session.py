@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from TikTokApi import TikTokApi
 
 from core import proxy_settings
+import netstats
 import tiktok_patch
 
 log = logging.getLogger("tiktok-watch")
@@ -17,6 +18,7 @@ log = logging.getLogger("tiktok-watch")
 SAVE_BANDWIDTH = ["image", "media", "font"]
 START_URL = "https://www.tiktok.com"
 NAV_TIMEOUT_MS = 90_000
+BROWSER_VIA_PROXY = {"on": False}
 
 
 async def _patient_page(context):
@@ -35,6 +37,14 @@ async def _patient_page(context):
     # from the start so the first load stays light on proxy bandwidth.
     await page.route("**/*", lambda route, request: (
         route.abort() if request.resource_type in SAVE_BANDWIDTH else route.continue_()))
+    # count what this browser pulls through the proxy (shown per run as proxy_mb)
+    def _count(resp):
+        if BROWSER_VIA_PROXY["on"]:
+            try:
+                netstats.add_proxy_bytes(int(resp.headers.get("content-length") or 0) + 600)
+            except (TypeError, ValueError):
+                netstats.add_proxy_bytes(600)
+    page.on("response", _count)
     return page
 
 
@@ -78,6 +88,7 @@ async def tiktok_session(headless: bool | None = None, browser: str | None = Non
         if attempt > 1 and proxy is None and pw_proxy:
             log.warning("Proxy kept failing; trying once without the proxy.")
             req_proxy = None
+        BROWSER_VIA_PROXY["on"] = bool(proxy)
         try:
             async with TikTokApi() as api:
                 await api.create_sessions(

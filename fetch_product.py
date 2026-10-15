@@ -11,6 +11,10 @@ import time
 
 import requests
 
+import netstats
+
+DIRECT_FIRST = __import__('os').environ.get('DIRECT_FIRST', '1') == '1'
+
 from fetch_video import HEADERS
 
 
@@ -65,7 +69,9 @@ def fetch_product(url: str, product_id: str, proxies: dict | None, attempts: int
     last: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
-            r = requests.get(url, headers=HEADERS, proxies=proxies, timeout=timeout)
+            # first try GitHub's own IP (free); the paid proxy only if that fails
+            via = None if (attempt == 1 and proxies and DIRECT_FIRST) else proxies
+            r = netstats.get(url, headers=HEADERS, proxies=via, timeout=timeout)
             if r.status_code == 200:
                 return parse_product_page(r.text, product_id)
             if r.status_code in (404, 410):

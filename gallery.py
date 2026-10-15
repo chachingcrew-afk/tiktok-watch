@@ -23,6 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 import requests
 
 import db
+import netstats
 from fetch_product import _unescape
 from fetch_video import HEADERS
 
@@ -129,7 +130,7 @@ def run(conn, min_sold: int, proxies: dict | None, stats) -> None:
         html = None
         for prox in ([None, proxies] if proxies else [None]):
             try:
-                r = requests.get(url, headers=HEADERS, proxies=prox, timeout=30)
+                r = netstats.get(url, headers=HEADERS, proxies=prox, timeout=30)
                 if r.status_code == 200 and '"images":[' in r.text.replace('\\"', '"'):
                     html = r.text
                     break
@@ -179,5 +180,5 @@ if __name__ == "__main__":  # run only the image step (python gallery.py)
     except BaseException as e:
         db.finish_run(conn, run_id, False, dict(stats), str(e))
         raise
-    db.finish_run(conn, run_id, True, dict(stats))
+    db.finish_run(conn, run_id, True, {**stats, **netstats.summary()})
     log.info("Done. %s", dict(stats))

@@ -9,6 +9,7 @@ from collections import Counter
 from datetime import datetime, timezone
 
 import db
+import netstats
 from core import Config, parse_video, passes_collect_filter, proxy_settings
 from session import setup_logging, tiktok_session
 from track import check_products
@@ -59,9 +60,9 @@ async def main() -> None:
     try:
         await run(cfg, conn)
     except BaseException as e:
-        db.finish_run(conn, run_id, False, {**STATS, "feeds": FEEDS}, str(e))
+        db.finish_run(conn, run_id, False, {**STATS, **netstats.summary(), "feeds": FEEDS}, str(e))
         raise
-    db.finish_run(conn, run_id, True, {**STATS, "feeds": FEEDS})
+    db.finish_run(conn, run_id, True, {**STATS, **netstats.summary(), "feeds": FEEDS})
     conn.close()
 
 
