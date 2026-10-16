@@ -26,7 +26,7 @@ from fetch_video import HEADERS
 
 log = logging.getLogger("tiktok-watch")
 API = "https://shop.tiktok.com/api/shop/pdp_desktop/page_data"
-WORKERS = int(os.environ.get("VIDEOS_WORKERS", "8"))
+WORKERS = int(os.environ.get("VIDEOS_WORKERS", "16"))
 PER_RUN = int(os.environ.get("VIDEOS_PER_RUN", "1500"))
 COVERS_PER_PRODUCT = int(os.environ.get("VIDEOS_COVERS", "6"))
 
