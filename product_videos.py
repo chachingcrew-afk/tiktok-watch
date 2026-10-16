@@ -35,16 +35,20 @@ def request_body(product_id: str, seller_id: str | None) -> str:
     info = {"product_id": str(product_id)}
     if seller_id:
         info["seller_id"] = str(seller_id)
+    # Same shape the product page itself sends (only the video_list component); a body without
+    # the nova_config block or error_code is rejected with code 100000.
     page_config = {
         "global_fe_config": {"page_name": "product_detail"},
+        "global_api_data_config": {"nova_config": {"api": "nova_config", "params": {
+            "resource_type_list": [1], "nova_source_key_list": ["view_tts_web_seo_source_key_black_friday_settings"]}}},
         "components_map": [{
             "component_type": "video_list", "component_name": "video_list",
             "fe_config": {"data_source": {"need_split_request": True, "need_product_info": True,
                                           "need_fetch_at_first_screen": False}},
         }],
-        "global_data": {"product_info": {"product_info": {**info, "product_model": dict(info)}}},
+        "global_data": {"product_info": {"error_code": 0, "product_info": {**info, "product_model": dict(info)}}},
     }
-    return json.dumps({"page_config": json.dumps(page_config, separators=(",", ":"))}, separators=(",", ":"))
+    return json.dumps({"page_config": json.dumps(page_config)})
 
 
 def _int(v):
