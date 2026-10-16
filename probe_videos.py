@@ -26,11 +26,13 @@ def main() -> None:
         info = {"status": r.status_code, "bytes": len(r.text)}
         info["keys"] = sorted(set(re.findall(r'"(\w*(?:video|aweme|play_count|digg|comment_count|view|item_id|content)\w*)":', t, re.I)))[:120]
         ctx = {}
-        for k in ["video_list", "videos", "product_video", "aweme_list", "item_list", "content_list", "related_videos", "video_info", "play_count", "aweme_id", "item_id"]:
+        for k in ["video_count", "format_video_count", "header_video", "desc_video", "video_infos"]:
             i = t.find(f'"{k}":')
             if i != -1:
-                ctx[k] = t[max(0, i - 300):i + 1500]
+                ctx[k] = t[max(0, i - 600):i + 1200]
         info["ctx"] = ctx
+        # API endpoints the page's own scripts call (where the creator video list would come from)
+        info["api_paths"] = sorted(set(re.findall(r'["\'](/api/[a-zA-Z0-9_/\-]+)', r.text)))[:80]
         info["video_ids"] = sorted(set(re.findall(r'"(?:aweme_id|video_id|item_id)":\s*"?(\d{18,20})', t)))[:30]
         info["tiktok_video_links"] = sorted(set(re.findall(r'tiktok\.com/@[\w.]+/video/\d+', t)))[:20]
         out[pid] = info
