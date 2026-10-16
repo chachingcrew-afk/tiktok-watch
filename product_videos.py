@@ -58,7 +58,9 @@ def parse_videos(payload: dict) -> list[dict]:
     """related_videos of the video_list component, in the page's order."""
     out = []
     for comp in ((payload.get("data") or {}).get("components_map") or []):
-        data = comp.get("component_data") or {}
+        data = comp.get("component_data") if isinstance(comp, dict) else None
+        if not isinstance(data, dict):
+            continue
         for i, v in enumerate(data.get("related_videos") or []):
             if not isinstance(v, dict) or not v.get("item_id"):
                 continue

@@ -16,7 +16,7 @@ def post(body, url):
     try:
         j = r.json()
         return {"status": r.status_code, "code": j.get("code"), "videos": len(parse_videos(j)), "len": len(r.text),
-                "comp_keys": [list((c.get("component_data") or {}).keys())[:10] for c in (j.get("data") or {}).get("components_map") or []][:3]}
+                "comp_types": [c.get("component_type") for c in (j.get("data") or {}).get("components_map") or []][:8]}
     except ValueError:
         return {"status": r.status_code, "start": r.text[:200]}
 
