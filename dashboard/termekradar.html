@@ -248,6 +248,16 @@ tr.clickable:hover td { background: var(--sunken); }
 .prow[aria-current="true"]::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--cobalt); }
 .thumb { width: 48px; height: 48px; border-radius: 8px; background: var(--sunken); border: 1px solid var(--line); overflow: hidden; display: grid; place-items: center; color: var(--faint); font-size: 18px; }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.vids { display: grid; gap: 8px; }
+.vid { display: grid; grid-template-columns: 54px minmax(0, 1fr); gap: 10px; align-items: start; text-decoration: none; color: inherit; padding: 6px; margin: -6px; border-radius: 8px; }
+.vid:hover { background: var(--sunken); }
+.vid-cover { width: 54px; height: 96px; border-radius: 6px; background: var(--sunken); border: 1px solid var(--line); overflow: hidden; display: grid; place-items: center; color: var(--faint); }
+.vid-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.vid-body { min-width: 0; display: grid; gap: 2px; }
+.vid-title { font-size: 13px; font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.vid-meta { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vid-stats { font-size: 12.5px; color: var(--muted); }
+.vid-stats b { color: var(--ink); }
 .gal { display: grid; gap: 8px; }
 /* square frame sized by its width (never by a max-height, which would crop it); the image is pinned inside and always shown whole */
 .gal-main { position: relative; width: 100%; max-width: min(100%, 460px); margin-inline: auto; aspect-ratio: 1 / 1; background: var(--sunken); border-radius: 10px; border: 1px solid var(--line); overflow: hidden; display: grid; place-items: center; color: var(--muted); font-size: 12.5px; text-align: center; padding: 12px; }
@@ -331,6 +341,7 @@ tr.clickable:hover td { background: var(--sunken); }
               <option value="sold_now">Összes eladás</option>
               <option value="price">Ár</option>
               <option value="rating">Értékelés</option>
+              <option value="video_views">Videók nézettsége</option>
               <option value="first_seen">Legutóbb felfedezett</option>
             </select>
           </div>
@@ -523,7 +534,7 @@ tr.clickable:hover td { background: var(--sunken); }
 
   let mcp = null, loading = false, tags = [], cats = [], brands = [], dirty = false;
   let state = { videos: [], shop: [], history: {}, phist: {}, runs: [], settings: {} };
-  const thumbs = {}, galleries = {}, galleryLoading = {};
+  const thumbs = {}, galleries = {}, galleryLoading = {}, pvideos = {}, pvideosLoading = {};
   let galIdx = 0;
   let sview = { seg: store.get("sseg") || "all", sort: store.get("ssort") || "revenue_per_day", q: "", cat: "", selected: null };
   let view = { seg: store.get("seg") || "tracking", sort: store.get("sort") || "recent_views_per_hour", q: "", selected: null, openRun: null };
@@ -580,6 +591,7 @@ select json_build_object(
            growth_pct, sold_per_day_prev, trend, sold_per_day_recent,
            (select sp.gallery_count from tiktok_watch.shop_products sp where sp.product_id = v.product_id) as gallery_count,
            (select sp.other_shops from tiktok_watch.shop_products sp where sp.product_id = v.product_id) as other_shops,
+           (select json_build_array(sp.video_count, sp.video_views, sp.video_likes) from tiktok_watch.shop_products sp where sp.product_id = v.product_id) as vstats,
            (select sp.twin_shops from tiktok_watch.shop_products sp where sp.product_id = v.product_id) as twin_shops,
            first_seen, last_seen, starred, hidden
     from tiktok_watch.shop_product_scores v where last_seen > now() - interval '21 days' or starred
@@ -872,7 +884,7 @@ select json_build_object(
     let rows = state.shop.filter(shopFilter(sview.seg));
     if (sview.cat) rows = rows.filter(p => p.category_id === sview.cat);
     if (q) rows = rows.filter(p => [p.title, p.shop_name, p.category_name].some(s => (s || "").toLowerCase().includes(q)));
-    const key = (p) => sview.sort === "first_seen" ? new Date(p.first_seen).getTime() : Number(p[sview.sort] ?? NaN);
+    const key = (p) => sview.sort === "first_seen" ? new Date(p.first_seen).getTime() : sview.sort === "video_views" ? Number((p.vstats || [])[1] ?? NaN) : Number(p[sview.sort] ?? NaN);
     const tie = (p) => Number(p.sold_now) || 0;
     return rows.sort((a, b) => { const x = key(a), y = key(b); const d = (isNaN(y) ? -Infinity : y) - (isNaN(x) ? -Infinity : x); return d || tie(b) - tie(a); });
   }
@@ -968,6 +980,36 @@ select json_build_object(
     } catch (_) { galleries[id] = null; }
     galleryLoading[id] = false;
     if (sview.selected === id) renderShopDetail();
+  }
+  async function loadProductVideos(p) {
+    const id = p.product_id;
+    if (pvideos[id] || pvideosLoading[id] || !(p.vstats && p.vstats[0]) || !/^\d+$/.test(id)) return;
+    pvideosLoading[id] = true;
+    try {
+      pvideos[id] = await sql(`select item_id, author_name, title, upload_time, play_count, like_count, prev_play_count, prev_checked_at, checked_at, cover
+        from tiktok_watch.shop_product_videos where product_id = '${id}' order by play_count desc nulls last limit 20`);
+    } catch (_) { pvideos[id] = null; }
+    pvideosLoading[id] = false;
+    if (sview.selected === id) renderShopDetail();
+  }
+  function videosSection(p) {
+    const vs = p.vstats || [];
+    const head = el("h3", {}, "Videók ehhez a termékhez", el("span", {}, vs[0] ? `${nf(vs[0])} videó · ${short(vs[1])} nézés · ${short(vs[2])} lájk` : ""));
+    if (!vs[0]) return el("div", { class: "d-sec" }, head, el("div", { class: "d-note" }, vs.length ? "A TikTok Shop nem mutat videót ehhez a termékhez." : "A videókat a következő reggeli futás tölti le (a 100+ eladásos és a csillagozott termékekhez)."));
+    const list = pvideos[p.product_id];
+    if (!list) { loadProductVideos(p); return el("div", { class: "d-sec" }, head, el("div", { class: "d-note" }, "Videók betöltése…")); }
+    const rows = list.map(v => {
+      const grow = v.prev_play_count != null && v.prev_checked_at ? (Number(v.play_count) - Number(v.prev_play_count)) / Math.max((new Date(v.checked_at) - new Date(v.prev_checked_at)) / 864e5, 0.25) : null;
+      return el("a", { class: "vid", href: "https://www.tiktok.com/@/video/" + v.item_id, target: "_blank", rel: "noopener", title: v.title || "" },
+        el("div", { class: "vid-cover" }, v.cover ? el("img", { src: "data:image/jpeg;base64," + v.cover, alt: "" }) : "▶"),
+        el("div", { class: "vid-body" },
+          el("div", { class: "vid-title" }, v.title || "Videó"),
+          el("div", { class: "vid-meta" }, (v.author_name || "?") + (v.upload_time ? " · " + ago(v.upload_time) : "")),
+          el("div", { class: "vid-stats" }, el("b", {}, short(v.play_count)), " nézés · ", el("b", {}, short(v.like_count)), " lájk",
+            grow != null && grow > 0 ? el("span", { class: "num-sub grow" }, `  +${short(grow)}/nap`) : null)));
+    });
+    return el("div", { class: "d-sec" }, head, el("div", { class: "vids" }, ...rows),
+      el("div", { class: "d-note" }, "A TikTok Shop oldalán látható videók, nézettség szerint. Kommentszámot a TikTok itt nem ad. A napi nézésnövekedés a második napi mérés után jelenik meg."));
   }
   function galleryEl(p) {
     const imgs = galleries[p.product_id] || (thumbs[p.product_id] ? [thumbs[p.product_id]] : []);
@@ -1073,7 +1115,8 @@ select json_build_object(
         el("div", { class: "kv" },
           kvItem(priceOf(p), p.price_original && Number(p.price_original) > Number(p.price) ? "ár, eredetileg $" + Number(p.price_original).toFixed(2) : "ár"),
           kvItem(p.rating ? "★ " + dec(p.rating) : "–", "értékelés"),
-          kvItem(p.reviews != null ? nf(p.reviews) : "–", "vélemény"))));
+          kvItem(p.reviews != null ? nf(p.reviews) : "–", "vélemény"))),
+      videosSection(p));
   }
   const validPid = (p) => /^\d+$/.test(String(p.product_id));
   async function shopToggleStar(p) {

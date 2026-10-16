@@ -25,6 +25,7 @@ import db
 import netstats
 import gallery
 import twins
+import product_videos
 from core import Config, proxy_settings
 from fetch_product import _unescape, fetch_product
 from fetch_video import HEADERS
@@ -221,6 +222,12 @@ async def main() -> None:
     try:
         seen = await scan_categories(cfg, conn, proxies)
         await refresh_missing(cfg, conn, proxies, seen)
+        try:
+            await asyncio.to_thread(product_videos.run, conn, cfg.shop_track_min_sold, STATS)
+        except Exception as e:  # videos are extra information; never fail the scan because of them
+            conn.rollback()
+            STATS["videos_failed"] += 1
+            log.warning("Video step failed: %s", e)
         try:
             await asyncio.to_thread(gallery.run, conn, cfg.shop_track_min_sold, proxies, STATS)
         except Exception as e:  # images are a convenience; never fail the scan because of them
