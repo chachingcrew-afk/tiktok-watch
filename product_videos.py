@@ -26,7 +26,7 @@ from fetch_video import HEADERS
 
 log = logging.getLogger("tiktok-watch")
 API = "https://shop.tiktok.com/api/shop/pdp_desktop/page_data"
-WORKERS = int(os.environ.get("VIDEOS_WORKERS", "16"))
+WORKERS = int(os.environ.get("VIDEOS_WORKERS", "8"))
 PER_RUN = int(os.environ.get("VIDEOS_PER_RUN", "1500"))
 COVERS_PER_PRODUCT = int(os.environ.get("VIDEOS_COVERS", "6"))
 
@@ -84,11 +84,14 @@ def parse_videos(payload: dict) -> list[dict]:
     return out
 
 
-def fetch_videos(product_id: str, seller_id: str | None, url: str | None, attempts: int = 2) -> list[dict]:
+def fetch_videos(product_id: str, seller_id: str | None, url: str | None, attempts: int = 4) -> list[dict]:
+    """The endpoint answers some requests with code 100000 (no data): sometimes only with the
+    seller id, sometimes only without it, sometimes just under load. Alternate both forms, back off."""
     last = None
     for attempt in range(attempts):
+        seller = seller_id if attempt % 2 == 0 else None
         try:
-            r = netstats_post(product_id, seller_id, url)
+            r = netstats_post(product_id, seller, url)
             if r.status_code == 200:
                 j = r.json()
                 if j.get("code") == 0:
@@ -98,7 +101,7 @@ def fetch_videos(product_id: str, seller_id: str | None, url: str | None, attemp
                 last = RuntimeError(f"HTTP {r.status_code}")
         except (requests.RequestException, ValueError) as e:
             last = e
-        time.sleep(random.uniform(1, 3) * (attempt + 1))
+        time.sleep(random.uniform(1, 2.5) * (attempt + 1))
     raise last or RuntimeError("fetch failed")
 
 
