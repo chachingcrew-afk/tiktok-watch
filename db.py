@@ -306,3 +306,53 @@ def prune_galleries(conn, min_sold: int) -> int:
         cur.execute("update tiktok_watch.shop_products p set gallery_at = null, gallery_count = null"
                     " where gallery_count > 0 and " + cond, (min_sold,))
         return n
+
+
+# ---------- creator videos of shop products (product_videos.py) ----------
+
+def products_for_videos(conn, min_sold: int, limit: int) -> list[tuple]:
+    """(product_id, seller_id, url, want_covers) for promising products whose videos were not read today.
+    Covers only for the products that also get a full gallery (1000+ sold or starred)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "select product_id, seller_id, url, (starred or coalesce(last_sold, 0) >= 1000) from tiktok_watch.shop_products"
+            " where not hidden and url is not null and (coalesce(last_sold, 0) >= %s or starred)"
+            "   and last_seen > now() - interval '14 days'"
+            "   and (videos_checked_at is null or videos_checked_at < now() - interval '20 hours')"
+            " order by starred desc, last_sold desc nulls last limit %s",
+            (min_sold, limit),
+        )
+        return cur.fetchall()
+
+
+def mark_videos_checked(conn, product_id: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute("update tiktok_watch.shop_products set videos_checked_at = now() where product_id = %s", (product_id,))
+
+
+def save_product_videos(conn, product_id: str, videos: list[dict], keep_covers: bool) -> None:
+    with conn.cursor() as cur:
+        for v in videos:
+            cur.execute(
+                """
+                insert into tiktok_watch.shop_product_videos
+                  (product_id, item_id, author_id, author_name, title, upload_time, duration_ms, play_count, like_count, cover, rank)
+                values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                on conflict (product_id, item_id) do update set
+                  prev_play_count = tiktok_watch.shop_product_videos.play_count,
+                  prev_like_count = tiktok_watch.shop_product_videos.like_count,
+                  prev_checked_at = tiktok_watch.shop_product_videos.checked_at,
+                  play_count = excluded.play_count, like_count = excluded.like_count,
+                  title = coalesce(excluded.title, tiktok_watch.shop_product_videos.title),
+                  author_name = coalesce(excluded.author_name, tiktok_watch.shop_product_videos.author_name),
+                  cover = coalesce(excluded.cover, tiktok_watch.shop_product_videos.cover),
+                  rank = excluded.rank, checked_at = now()
+                """,
+                (product_id, v["item_id"], v.get("author_id"), v.get("author_name"), v.get("title"), v.get("upload_time"),
+                 v.get("duration_ms"), v.get("play_count"), v.get("like_count"), v.get("cover") if keep_covers else None, v.get("rank")),
+            )
+        cur.execute(
+            "update tiktok_watch.shop_products set videos_checked_at = now(), video_count = %s,"
+            " video_views = %s, video_likes = %s where product_id = %s",
+            (len(videos), sum(v.get("play_count") or 0 for v in videos), sum(v.get("like_count") or 0 for v in videos), product_id),
+        )

@@ -251,3 +251,18 @@ def test_twins_by_title_and_shop():
     assert "VEVOR Home Store" not in t["7"]          # one seller's shops are not "other shops"
     assert t["4"] == {"Else"}                         # same photo + related title
     assert "Third" not in t["4"] and not t["6"]      # same photo, unrelated title
+
+
+def test_product_videos_parse_and_body():
+    import json
+    from product_videos import parse_videos, request_body
+    body = json.loads(request_body("123", "456"))
+    cfg = json.loads(body["page_config"])
+    assert cfg["components_map"][0]["component_type"] == "video_list"
+    assert cfg["global_data"]["product_info"]["product_info"]["product_id"] == "123"
+    payload = {"code": 0, "data": {"components_map": [{"component_data": {"related_videos": [
+        {"item_id": "7315122369276710187", "author_name": "ADHDee ", "play_count": "6379904", "like_count": "364674",
+         "upload_time": "1703184657", "title": "When I tell you", "duration": 48114, "cover_image_url": "https://x/y.jpeg"}]}}]}}
+    v = parse_videos(payload)
+    assert v[0]["play_count"] == 6379904 and v[0]["like_count"] == 364674 and v[0]["author_name"] == "ADHDee"
+    assert v[0]["upload_time"].year == 2023 and v[0]["rank"] == 0
