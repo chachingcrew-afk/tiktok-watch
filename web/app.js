@@ -207,8 +207,9 @@
   }
 
   // ---------- products: rules ----------
-  const SEGMENTS = [["all", "Ársávban"], ["win", "Nyerő"], ["rising", "Felfutó"], ["accel", "Gyorsul"], ["multi", "Több boltnál"], ["starred", "Csillagos"], ["new", "Új"], ["brand", "Márkás"], ["hidden", "Elrejtett"]];
+  const SEGMENTS = [["all", "Ársávban"], ["hot", "Aktuális nyerő"], ["win", "Nyerő"], ["rising", "Felfutó"], ["accel", "Gyorsul"], ["multi", "Több boltnál"], ["starred", "Csillagos"], ["new", "Új"], ["brand", "Márkás"], ["hidden", "Elrejtett"]];
   const TIPS = {
+    hot: () => `Most futó termékek: nő az eladásuk, és van legfeljebb ${setting("hot_video_days")} napos videójuk`,
     win: () => `Legalább $${nf(setting("shop_min_revenue_day"))} bevétel naponta`,
     rising: () => "Naponta legalább 5%-kal nő az eddigi eladásaihoz képest",
     accel: () => "Ma legalább 1,2-szer annyit adnak el, mint előző nap",
@@ -216,7 +217,7 @@
     brand: () => "Ismert márkák saját termékei, ezek nem dropshippelhetők. A többi listából kimaradnak.",
     new: () => "Az elmúlt 30 órában felfedezett termékek",
   };
-  const DEFAULTS = { shop_min_price: 30, shop_max_price: 70, shop_min_revenue_day: 1000, shop_fetches_per_category: 3, shop_track_min_sold: 100 };
+  const DEFAULTS = { hot_video_days: 60, shop_min_price: 30, shop_max_price: 70, shop_min_revenue_day: 1000, shop_fetches_per_category: 3, shop_track_min_sold: 100 };
   const setting = (k) => { const v = state.settings[k]; return v != null ? Number(v) : DEFAULTS[k]; };
   const DEFAULT_BRANDS = ["VEVOR","Merach","Anker","Soundcore","eufy","Ninja","Shark","SharkNinja","Dyson","Bissell","Hoover","iRobot","Roborock","Tineco","Keurig","Cuisinart","KitchenAid","Hamilton Beach","Instant Pot","Instant","COSORI","Chefman","BLACK+DECKER","DEWALT","Milwaukee","Makita","Ryobi","Bosch","Philips","Braun","Oral-B","Waterpik","Conair","Revlon","Remington","Wahl","Andis","BaBylissPRO","Laifen","Panasonic","Samsung","Apple","JBL","Sony","Bose","Beats","Logitech","Garmin","Fitbit","Coleman","YETI","Stanley","Hydro Flask","Owala","Lodge","OXO","Rubbermaid","Sunbeam","Igloo","Theragun","Therabody","Hyperice","RENPHO","Bowflex","Gorilla Grip","Amazon Basics","LEGO","Hasbro","Mattel","Nerf","Fisher-Price","Crayola","Furbo","PetSafe","Cricut","BlendJet","Medicube","Govee","TP-Link","Ring","Blink","Wyze","Ecovacs","Dreame","Xiaomi","Ugreen","Baseus","Belkin","OtterBox","Spigen","Casetify","Shokz","Soundpeats","Sterilite","Mueller","Gourmia","Bella","Dash","Bear","AquaSonic","Snow","Crest","Sol de Janeiro","CeraVe","Olaplex","T3","GHD"];
   const BRAND_AMBIGUOUS = new Set(["Dash", "Bear", "Snow", "Instant", "Ring", "Bella"]);
@@ -242,6 +243,8 @@
   const priceMax = () => P.pmax != null ? P.pmax : setting("shop_max_price");
   const inBand = (p) => p.price != null && Number(p.price) >= priceMin() && Number(p.price) <= priceMax();
   const isWin = (p) => Number(p.revenue_per_day) >= setting("shop_min_revenue_day");
+  const isGrowing = (p) => Number(p.sold_per_day) > 0 && (Number(p.trend) >= 1 || Number(p.sold_per_day_recent) >= Number(p.sold_per_day) || Number(p.growth_pct) >= 2);
+  const isHot = (p) => Number(p.fresh_videos) > 0 && isGrowing(p);
   const isNew = (p) => p.first_seen && Date.now() - new Date(p.first_seen).getTime() < 30 * 36e5;
   function segFilter(seg) {
     return (p) => {
@@ -252,6 +255,7 @@
       if (brandOf(p)) return false;
       if (!inBand(p) && !p.starred) return false;
       if (seg === "win") return isWin(p);
+      if (seg === "hot") return isHot(p);
       if (seg === "rising") return Number(p.growth_pct) >= 5;
       if (seg === "accel") return Number(p.trend) > 1.2 && Number(p.sold_per_day) >= 10;
       if (seg === "multi") return Number(p.other_shops) > 0;
@@ -281,7 +285,7 @@
       ["", "Termék a sávban", nf(live.length), `$${priceMin()}–${priceMax()}, márkák nélkül`],
       ["money", "Nyerő termék", nf(live.filter(isWin).length), `legalább $${nf(setting("shop_min_revenue_day"))}/nap`],
       ["money", "Legjobb napi bevétel", best && best.revenue_per_day != null ? money(best.revenue_per_day) : "–", best ? String(best.title || "").slice(0, 38) : "még nincs mérés"],
-      ["heat", "Felfutó", nf(live.filter(p => Number(p.growth_pct) >= 5).length), `${nf(measured.length)} mért termékből, össz. ${money(totalRev)}/nap`],
+      ["heat", "Aktuális nyerő", nf(live.filter(isHot).length), `nő az eladás + max. ${setting("hot_video_days")} napos videó`],
     ];
     $("kpis").replaceChildren(...cards.map(([c, l, v, s]) => el("div", { class: "kpi " + c }, el("span", {}, l), el("b", {}, v), el("small", {}, s))));
   }
@@ -361,6 +365,7 @@
     const meta = [];
     if (brandOf(p)) meta.push(el("span", { class: "chip" }, "Márkás"));
     if (Number(p.other_shops) > 0) meta.push(el("span", { class: "chip money", title: (p.twin_shops || []).join(", ") }, `${Number(p.other_shops) + 1} boltnál`));
+    if (isHot(p)) meta.push(el("span", { class: "chip heat" }, "Aktuális"));
     if (isWin(p)) meta.push(el("span", { class: "chip money" }, "Nyerő"));
     if (isNew(p)) meta.push(el("span", { class: "chip blue" }, "Új"));
     meta.push(el("span", {}, [p.category_name, p.shop_name].filter(Boolean).join(" · ")));
@@ -376,7 +381,8 @@
         p.revenue_per_day != null ? el("div", { class: "small" }, "≈ " + money(Number(p.revenue_per_day) * 30) + "/hó") : null),
       el("td", { class: "r" }, p.growth_pct != null ? el("div", { class: "big" + (Number(p.growth_pct) >= 5 ? " pos" : "") }, "+" + pct(p.growth_pct)) : el("span", { class: "na" }, "–"), growthChip(p)),
       el("td", { class: "r" }, el("div", { class: "big" }, short(p.sold_now)), el("div", { class: "small" }, "db")),
-      el("td", { class: "r" }, p.video_count ? [el("div", { class: "big" }, short(p.video_views)), el("div", { class: "small" }, `${nf(p.video_count)} videó`)] : el("span", { class: "na" }, "–")),
+      el("td", { class: "r" }, p.video_count || p.fresh_videos ? [el("div", { class: "big" }, short(p.video_views)),
+        Number(p.fresh_videos) > 0 ? el("div", { class: "small", style: "color:var(--heat);font-weight:600" }, `${nf(p.fresh_videos)} friss videó`) : el("div", { class: "small" }, `${nf(p.video_count)} videó, ${p.newest_video ? "legújabb " + ago(p.newest_video) : ""}`)] : el("span", { class: "na" }, "–")),
       el("td", { class: "r" }, p.rating ? [el("div", { class: "big" }, "★ " + dec(p.rating)), el("div", { class: "small" }, short(p.reviews) + " vél.")] : el("span", { class: "na" }, "–")));
   }
 
@@ -432,7 +438,7 @@
     const id = p.product_id;
     if (p.gallery_count) ensure("gallery", id, async () => (await rpc("tr_gallery", { p_product_id: id }) || []).map(r => r.data));
     ensure("hist", id, () => rpc("tr_sales_history", { p_product_id: id }));
-    if (p.video_count) ensure("videos", id, () => rpc("tr_product_videos", { p_product_id: id }));
+    if (p.video_count || p.fresh_videos) ensure("videos", id, () => rpc("tr_product_videos", { p_product_id: id }));
     const orig = p.price_original && Number(p.price_original) > Number(p.price) ? Number(p.price_original) : null;
     const stat = (v, l, c) => el("div", { class: "stat " + (c || "") }, el("b", {}, v), el("span", {}, l));
     const brand = brandOf(p);
@@ -490,22 +496,23 @@
     if (n < 2) return;
     galIdx = (galIdx + d + n) % n; renderDrawer();
   }
+  const isFresh = (v) => !!v.upload_time && Date.now() - new Date(v.upload_time).getTime() < setting("hot_video_days") * 864e5;
   function videosSection(p) {
-    const head = el("h3", {}, "Videók ehhez a termékhez", el("span", {}, p.video_count ? `${nf(p.video_count)} videó · ${short(p.video_views)} nézés · ${short(p.video_likes)} lájk` : ""));
-    if (!p.video_count) return el("div", { class: "d-sec" }, head, el("div", { class: "d-note" }, p.video_count === 0 ? "A TikTok Shop nem mutat videót ehhez a termékhez." : "A videókat a napi futás tölti le a 100+ eladásos és a csillagozott termékekhez."));
+    const head = el("h3", {}, "Videók ehhez a termékhez", el("span", {}, (p.video_count ? `${nf(p.video_count)} videó · ${short(p.video_views)} nézés` : "") + (Number(p.fresh_videos) ? ` · ${nf(p.fresh_videos)} friss` : "")));
+    if (!p.video_count && !p.fresh_videos) return el("div", { class: "d-sec" }, head, el("div", { class: "d-note" }, p.video_count === 0 ? "A TikTok Shop nem mutat videót ehhez a termékhez." : "A videókat a napi futás tölti le a 100+ eladásos és a csillagozott termékekhez."));
     const vids = cache.videos[p.product_id];
     if (!Array.isArray(vids)) return el("div", { class: "d-sec" }, head, el("div", { class: "d-note" }, vids === false ? "Nem sikerült betölteni a videókat." : "Videók betöltése…"));
     return el("div", { class: "d-sec" }, head,
-      el("div", { class: "vgrid" }, ...vids.map(v => {
+      el("div", { class: "vgrid" }, ...vids.slice().sort((a, b) => (isFresh(b) - isFresh(a)) || (Number(b.play_count) - Number(a.play_count))).map(v => {
         const days = v.prev_checked_at ? Math.max((new Date(v.checked_at) - new Date(v.prev_checked_at)) / 864e5, 0.25) : null;
         const grow = days && v.prev_play_count != null ? (Number(v.play_count) - Number(v.prev_play_count)) / days : null;
         return el("a", { class: "vcard", href: "https://www.tiktok.com/@/video/" + v.item_id, target: "_blank", rel: "noopener", title: v.title || "" },
           el("div", { class: "vcover" }, v.cover ? el("img", { src: "data:image/jpeg;base64," + v.cover, alt: "" }) : "▶",
-            el("span", { class: "views" }, "▶ " + short(v.play_count)), grow > 0 ? el("span", { class: "grow" }, "+" + short(grow) + "/nap") : null),
+            el("span", { class: "views" }, "▶ " + short(v.play_count)), grow > 0 ? el("span", { class: "grow" }, "+" + short(grow) + "/nap") : isFresh(v) ? el("span", { class: "grow", style: "background:var(--heat)" }, "friss") : null),
           el("div", { class: "vname" }, v.author_name || "?"),
           el("div", { class: "vsub" }, `♥ ${short(v.like_count)}` + (v.upload_time ? " · " + ago(v.upload_time) : "")));
       })),
-      el("div", { class: "d-note" }, "A TikTok Shop termékoldalán látható videók, nézettség szerint. Kommentszámot a TikTok itt nem ad."));
+      el("div", { class: "d-note" }, "Elöl a friss videók (a napi videógyűjtésből), utána a TikTok Shop termékoldalán látható videók nézettség szerint. A termékoldal listája csak régebbi videókat mutat."));
   }
 
   // ---------- charts ----------
@@ -636,6 +643,7 @@
     ["shop_min_price", "Minimum ár ($)", 0, 10000, ""], ["shop_max_price", "Maximum ár ($)", 1, 10000, ""],
     ["shop_min_revenue_day", "„Nyerő” ennyi napi bevételtől ($)", 0, 1e7, ""],
     ["shop_fetches_per_category", "Betöltés kategóriánként", 1, 10, "Egy betöltés kb. 20 terméket mutat, mindig kicsit mást."],
+    ["hot_video_days", "„Aktuális nyerő”: videó legfeljebb ennyi napos", 7, 365, "Ennél frissebb videó kell ahhoz, hogy egy termék aktuális nyerő legyen."],
     ["shop_track_min_sold", "Videók és galéria ennyi eladástól", 0, 1e9, "Ennél kevesebb eladásnál nem tölti le a termék videóit és képeit."],
     ["videos_per_hashtag", "Videó hashtagenként", 10, 1000, "A TikTok kb. 150–190 videó után megáll."], ["trending_count", "Trending videók száma", 0, 1000, ""],
     ["max_age_days", "Legfeljebb ennyi napos videó", 1, 30, ""], ["min_views", "Legalább ennyi nézés", 0, 1e9, ""],
@@ -671,7 +679,7 @@
       el("div", { class: "card wide" }, el("h2", {}, "Termékkeresés"),
         el("p", {}, "Minden reggel végignézi ezeket a TikTok Shop kategóriákat, és elmenti az ársávba eső termékeket. 6 óránként újraméri az eladásukat."),
         el("div", { class: "row" }, numField("shop_min_price"), numField("shop_max_price"), numField("shop_min_revenue_day")),
-        el("div", { class: "row" }, numField("shop_fetches_per_category"), numField("shop_track_min_sold")),
+        el("div", { class: "row" }, numField("shop_fetches_per_category"), numField("shop_track_min_sold"), numField("hot_video_days")),
         tagEditor("cats", cats, "Kategóriák", "Zöld szám: hány ársávba eső terméket hozott az utolsó futásnál. Új kategóriát a TikTok Shop kategóriaoldal linkjével adhatsz hozzá.",
           "pl. shop.tiktok.com/us/c/fitness/835336", (x) => { const m = x.match(/(?:\/c\/)?([a-z0-9-]+)\/(\d{4,})/i); return m ? m[1].toLowerCase() + "/" + m[2] : null; },
           (c) => [catLabel(c), catStats[c] ? el("em", {}, catStats[c].in_range || 0) : null]),

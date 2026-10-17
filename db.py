@@ -357,3 +357,42 @@ def save_product_videos(conn, product_id: str, videos: list[dict], keep_covers: 
             " video_views = %s, video_likes = %s where product_id = %s",
             (len(videos), sum(v.get("play_count") or 0 for v in videos), sum(v.get("like_count") or 0 for v in videos), product_id),
         )
+
+
+# ---------- fresh videos from the hashtag feeds, linked to shop products ----------
+
+def link_feed_video(conn, v: ParsedVideo) -> None:
+    """A fresh feed video with a TikTok Shop product: make sure the product is known (so its sales get
+    measured) and record the video under it. The product page's own video list is months old, so
+    these feed videos are what shows that a product is being pushed right now."""
+    p = v.product_info or {}
+    pid = p.get("product_id")
+    if not pid:
+        return
+    cat = (p.get("category") or "").split(" › ")[-1] or None
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into tiktok_watch.shop_products (product_id, title, url, image, category_name, seller_id, price, first_seen, last_seen)
+            values (%s,%s,%s,%s,%s,%s,%s, now(), now())
+            on conflict (product_id) do update set last_seen = now(),
+              title = coalesce(tiktok_watch.shop_products.title, excluded.title),
+              url = coalesce(tiktok_watch.shop_products.url, excluded.url),
+              image = coalesce(tiktok_watch.shop_products.image, excluded.image),
+              seller_id = coalesce(tiktok_watch.shop_products.seller_id, excluded.seller_id),
+              price = coalesce(tiktok_watch.shop_products.price, excluded.price)
+            """,
+            (pid, p.get("title") or v.product_title, p.get("url"), p.get("image"), cat, p.get("seller_id"), p.get("price")),
+        )
+        cur.execute(
+            """
+            insert into tiktok_watch.shop_product_videos (product_id, item_id, author_name, title, upload_time, play_count, like_count, rank, source)
+            values (%s,%s,%s,%s,%s,%s,%s, 1000, 'feed')
+            on conflict (product_id, item_id) do update set
+              prev_play_count = tiktok_watch.shop_product_videos.play_count,
+              prev_like_count = tiktok_watch.shop_product_videos.like_count,
+              prev_checked_at = tiktok_watch.shop_product_videos.checked_at,
+              play_count = excluded.play_count, like_count = excluded.like_count, checked_at = now()
+            """,
+            (pid, v.video_id, v.author, (v.description or "")[:500] or None, v.created_at, v.views, v.likes),
+        )

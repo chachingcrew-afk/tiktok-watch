@@ -30,6 +30,14 @@ async def scan(api, source: str, iterator, cfg: Config, conn, known: set[str], s
             if parsed is None:
                 stats["unparsable"] += 1
                 continue
+            if (parsed.product_info or {}).get("product_id") and (now - parsed.created_at).days <= 60:
+                try:
+                    db.link_feed_video(conn, parsed)
+                    conn.commit()
+                    stats["product_videos_linked"] += 1
+                except Exception as e:  # noqa: BLE001
+                    conn.rollback()
+                    log.warning("Could not link video %s to its product: %s", parsed.video_id, e)
             if parsed.video_id in known:
                 stats["already_tracked"] += 1
                 continue
