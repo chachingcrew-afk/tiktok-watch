@@ -66,16 +66,40 @@ async def main() -> None:
     conn.close()
 
 
+SESSION_DEAD = ("No sessions created", "No valid sessions", "sessions appear to be dead")
+MAX_SESSION_RESTARTS = 3
+
+
 async def run(cfg: Config, conn) -> None:
     known = db.known_ids(conn)
     stats = STATS
-    async with tiktok_session() as (api, _):
-        if cfg.include_trending:
-            await scan(api, "trending", api.trending.videos(count=cfg.trending_count), cfg, conn, known, stats)
-        for tag in cfg.hashtags:
-            await scan(api, f"#{tag}", api.hashtag(name=tag).videos(count=cfg.videos_per_hashtag),
-                       cfg, conn, known, stats)
-            await asyncio.sleep(random.uniform(3, 8))
+    feeds = ([("trending", None)] if cfg.include_trending else []) + [(f"#{t}", t) for t in cfg.hashtags]
+    restarts = 0
+    # TikTokApi drops its browser session after some errors (a bad proxy exit IP, a blocked call),
+    # and every later feed then fails with "No sessions created". When that happens, open a fresh
+    # session and continue with the feed that broke it.
+    while feeds and restarts <= MAX_SESSION_RESTARTS:
+        async with tiktok_session() as (api, _):
+            while feeds:
+                source, tag = feeds[0]
+                it = api.trending.videos(count=cfg.trending_count) if tag is None else \
+                    api.hashtag(name=tag).videos(count=cfg.videos_per_hashtag)
+                await scan(api, source, it, cfg, conn, known, stats)
+                err = FEEDS.get(source, {}).get("error", "")
+                if err and any(m in err for m in SESSION_DEAD):
+                    restarts += 1
+                    stats["session_restarts"] += 1
+                    if restarts <= MAX_SESSION_RESTARTS:
+                        FEEDS[source].pop("error", None)
+                        stats["feed_errors"] -= 1
+                        log.warning("Browser session died at %s; starting a new one (%d/%d).", source, restarts, MAX_SESSION_RESTARTS)
+                    else:
+                        feeds.pop(0)
+                    break
+                feeds.pop(0)
+                await asyncio.sleep(random.uniform(3, 8))
+        if feeds:
+            await asyncio.sleep(15)
     # Read price and units sold of the newly found products right away, instead of waiting for
     # the next 6-hourly tracking run (products already checked recently are skipped).
     try:

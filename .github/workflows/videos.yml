@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: tiktok-watch
+  group: tiktok-watch-videos
   cancel-in-progress: false
 
 jobs:

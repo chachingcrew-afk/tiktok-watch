@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: tiktok-watch
+  group: tiktok-watch-shop_track
   cancel-in-progress: false
 
 jobs:

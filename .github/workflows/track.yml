@@ -12,7 +12,7 @@ on:
 
 # collect and track never run at the same time
 concurrency:
-  group: tiktok-watch
+  group: tiktok-watch-track
   cancel-in-progress: false
 
 jobs:
