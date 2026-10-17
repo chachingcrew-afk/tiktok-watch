@@ -224,7 +224,7 @@ def shop_products_6h(conn, min_price: float, max_price: float, limit: int) -> li
             "select p.product_id, p.url from tiktok_watch.shop_products p"
             " left join tiktok_watch.shop_product_scores v using (product_id)"
             " where not p.hidden and p.url is not null and p.last_seen > now() - interval '14 days'"
-            "   and (p.starred or p.price between %s and %s)"
+            "   and (p.starred or p.price between %s and %s or p.price is null)"
             "   and (p.page_checked_at is null or p.page_checked_at < now() - interval '5 hours')"
             " order by p.starred desc, v.sold_per_day desc nulls last, p.last_sold desc nulls last limit %s",
             (min_price, max_price, limit),
