@@ -65,28 +65,84 @@
   const sized = (url, size) => url ? url.replace(/~tplv-([a-z0-9]+)-[a-z-]+(?::\d+:\d+)?\.(webp|jpeg|jpg|png|image)/, `~tplv-$1-crop-webp:${size}:${size}.webp`) : null;
 
   // ---------- auth ----------
+  const back = () => location.origin + location.pathname;
+  let mode = "signin";
+  function show(id) { for (const s of ["login", "recover", "noaccess"]) $(s).hidden = s !== id; $("app").hidden = id !== "app"; }
+  function note(text, isErr) { $("login-note").textContent = text || ""; $("login-note").className = "login-note" + (isErr ? " err" : ""); }
   async function boot() {
-    const { data } = await sb.auth.getSession();
-    if (data.session) startApp(data.session); else showLogin();
     sb.auth.onAuthStateChange((ev, session) => {
-      if (ev === "SIGNED_IN" && session && $("app").hidden) startApp(session);
+      if (ev === "PASSWORD_RECOVERY") { show("recover"); return; }
+      if (ev === "SIGNED_IN" && session && $("app").hidden && $("recover").hidden) startApp(session);
       if (ev === "SIGNED_OUT") showLogin();
     });
+    const { data } = await sb.auth.getSession();
+    if (/type=recovery/.test(location.hash)) { show("recover"); return; }
+    if (data.session) startApp(data.session); else showLogin();
   }
-  function showLogin(msg) {
-    $("app").hidden = true; $("login").hidden = false;
-    if (msg) $("login-note").textContent = msg;
+  function showLogin(msg, isErr) { show("login"); if (msg) note(msg, isErr); }
+  function setMode(m) {
+    mode = m;
+    $("tab-signin").setAttribute("aria-selected", String(m === "signin"));
+    $("tab-signup").setAttribute("aria-selected", String(m === "signup"));
+    $("auth-pass2").hidden = $("auth-pass2-label").hidden = m !== "signup";
+    $("auth-pass").setAttribute("autocomplete", m === "signup" ? "new-password" : "current-password");
+    $("auth-btn").textContent = m === "signup" ? "Regisztráció" : "Belépés";
+    $("forgot").hidden = m === "signup";
+    note("");
   }
-  $("login-form").addEventListener("submit", async (e) => {
+  $("tab-signin").addEventListener("click", () => setMode("signin"));
+  $("tab-signup").addEventListener("click", () => setMode("signup"));
+  const authMsg = (e) => {
+    const m = (e && e.message) || "";
+    if (/Invalid login credentials/i.test(m)) return "Hibás e-mail cím vagy jelszó.";
+    if (/Email not confirmed/i.test(m)) return "Az e-mail címed még nincs megerősítve. Kattints a regisztráció után kapott levélben lévő linkre.";
+    if (/already registered/i.test(m)) return "Ezzel a címmel már van fiók. Lépj be, vagy kérj új jelszót.";
+    if (/provider is not enabled/i.test(m)) return "A Google-belépés még nincs bekapcsolva a Supabase-ben.";
+    return m || "Ismeretlen hiba.";
+  };
+  $("auth-form").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const email = $("login-email").value.trim();
-    if (!email) return;
-    $("login-btn").disabled = true; $("login-note").textContent = "Küldés…";
-    const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
-    $("login-btn").disabled = false;
-    $("login-note").textContent = error ? "Nem sikerült elküldeni: " + error.message : "Elküldtük. Nyisd meg az e-mailben kapott linket ezen az eszközön.";
+    const email = $("auth-email").value.trim(), pass = $("auth-pass").value;
+    if (!/^\S+@\S+\.\S+$/.test(email)) { note("Adj meg egy érvényes e-mail címet.", true); return; }
+    if (pass.length < 8) { note("A jelszó legalább 8 karakter legyen.", true); return; }
+    $("auth-btn").disabled = true;
+    try {
+      if (mode === "signup") {
+        if (pass !== $("auth-pass2").value) { note("A két jelszó nem egyezik.", true); return; }
+        const { data, error } = await sb.auth.signUp({ email, password: pass, options: { emailRedirectTo: back() } });
+        if (error) throw error;
+        if (data.session) startApp(data.session);
+        else note("Elküldtük a megerősítő e-mailt. Kattints a benne lévő linkre, utána be tudsz lépni.");
+      } else {
+        const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
+        if (error) throw error;
+        startApp(data.session);
+      }
+    } catch (err) { note(authMsg(err), true); }
+    finally { $("auth-btn").disabled = false; }
   });
-  $("logout").addEventListener("click", async () => { await sb.auth.signOut(); location.reload(); });
+  $("google-btn").addEventListener("click", async () => {
+    const { error } = await sb.auth.signInWithOAuth({ provider: "google", options: { redirectTo: back() } });
+    if (error) note(authMsg(error), true);
+  });
+  $("forgot").addEventListener("click", async () => {
+    const email = $("auth-email").value.trim();
+    if (!email) { note("Írd be fent az e-mail címed, aztán kattints újra.", true); $("auth-email").focus(); return; }
+    const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: back() });
+    note(error ? authMsg(error) : "Ha van fiók ezzel a címmel, küldtünk egy linket az új jelszóhoz.", !!error);
+  });
+  $("recover-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const pass = $("new-pass").value;
+    if (pass.length < 8) { $("recover-note").textContent = "Legalább 8 karakter legyen."; return; }
+    const { data, error } = await sb.auth.updateUser({ password: pass });
+    if (error) { $("recover-note").textContent = authMsg(error); return; }
+    history.replaceState(null, "", back());
+    const s = await sb.auth.getSession();
+    startApp(s.data.session || { user: data.user });
+  });
+  $("logout").addEventListener("click", async () => { await sb.auth.signOut(); location.replace(back()); });
+  $("noaccess-out").addEventListener("click", async () => { await sb.auth.signOut(); location.replace(back()); });
 
   // ---------- state ----------
   let state = { shop: [], videos: [], history: {}, runs: [], settings: {} };
@@ -96,7 +152,7 @@
   const cache = { thumbs: {}, gallery: {}, videos: {}, hist: {} };
 
   async function startApp(session) {
-    $("login").hidden = true; $("app").hidden = false;
+    show("app");
     $("user-email").textContent = session.user.email;
     selectView(store.get("view") || "products");
     await load();
@@ -112,7 +168,7 @@
       banner(null);
       renderAll();
     } catch (e) {
-      if (e && e.code === "42501") { await sb.auth.signOut(); showLogin("Ez az e-mail cím nem fér hozzá az oldalhoz."); return; }
+      if (e && e.code === "42501") { $("noaccess-text").textContent = `A(z) ${$("user-email").textContent} fióknak még nincs hozzáférése az adatokhoz. Szólj, és felveszem a jogosultak közé.`; show("noaccess"); return; }
       banner(errText(e), true, { label: "Újra", fn: load });
     } finally {
       $("refresh").disabled = false; $("refresh").textContent = "Frissítés";
