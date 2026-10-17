@@ -496,7 +496,41 @@
     if (n < 2) return;
     galIdx = (galIdx + d + n) % n; renderDrawer();
   }
+  // Covers we did not store: TikTok's oEmbed endpoint (CORS-enabled) returns a fresh cover URL per video.
+  const oembed = {};
+  let oembedActive = 0; const oembedQueue = [];
+  function coverFor(v, box) {
+    const id = v.item_id;
+    const put = (info) => {
+      if (!info || !info.thumbnail_url) return;
+      const i = el("img", { src: info.thumbnail_url, alt: "", loading: "lazy", referrerpolicy: "no-referrer" });
+      i.addEventListener("error", () => i.remove(), { once: true });
+      box.prepend(i);
+      const a = box.closest("a");
+      if (a && info.author_unique_id) a.href = `https://www.tiktok.com/@${info.author_unique_id}/video/${id}`;
+    };
+    if (oembed[id] !== undefined) { if (oembed[id] && oembed[id].then) oembed[id].then(put); else put(oembed[id]); return; }
+    oembed[id] = new Promise((resolve) => {
+      const run = async () => {
+        oembedActive++;
+        try {
+          const r = await fetch("https://www.tiktok.com/oembed?url=" + encodeURIComponent("https://www.tiktok.com/video/" + id));
+          const info = r.ok ? await r.json() : null;
+          oembed[id] = info; resolve(info);
+        } catch (_) { oembed[id] = null; resolve(null); }
+        finally { oembedActive--; const next = oembedQueue.shift(); if (next) next(); }
+      };
+      if (oembedActive < 4) run(); else oembedQueue.push(run);
+    });
+    oembed[id].then(put);
+  }
   const isFresh = (v) => !!v.upload_time && Date.now() - new Date(v.upload_time).getTime() < setting("hot_video_days") * 864e5;
+  function vcover(v, ...overlay) {
+    const box = el("div", { class: "vcover" }, ...overlay);
+    if (v.cover) box.prepend(el("img", { src: "data:image/jpeg;base64," + v.cover, alt: "" }));
+    else coverFor(v, box);
+    return box;
+  }
   function videosSection(p) {
     const head = el("h3", {}, "Videók ehhez a termékhez", el("span", {}, (p.video_count ? `${nf(p.video_count)} videó · ${short(p.video_views)} nézés` : "") + (Number(p.fresh_videos) ? ` · ${nf(p.fresh_videos)} friss` : "")));
     if (!p.video_count && !p.fresh_videos) return el("div", { class: "d-sec" }, head, el("div", { class: "d-note" }, p.video_count === 0 ? "A TikTok Shop nem mutat videót ehhez a termékhez." : "A videókat a napi futás tölti le a 100+ eladásos és a csillagozott termékekhez."));
@@ -507,8 +541,8 @@
         const days = v.prev_checked_at ? Math.max((new Date(v.checked_at) - new Date(v.prev_checked_at)) / 864e5, 0.25) : null;
         const grow = days && v.prev_play_count != null ? (Number(v.play_count) - Number(v.prev_play_count)) / days : null;
         return el("a", { class: "vcard", href: "https://www.tiktok.com/@/video/" + v.item_id, target: "_blank", rel: "noopener", title: v.title || "" },
-          el("div", { class: "vcover" }, v.cover ? el("img", { src: "data:image/jpeg;base64," + v.cover, alt: "" }) : "▶",
-            el("span", { class: "views" }, "▶ " + short(v.play_count)), grow > 0 ? el("span", { class: "grow" }, "+" + short(grow) + "/nap") : isFresh(v) ? el("span", { class: "grow", style: "background:var(--heat)" }, "friss") : null),
+          vcover(v, el("span", { class: "views" }, "▶ " + short(v.play_count)),
+            grow > 0 ? el("span", { class: "grow" }, "+" + short(grow) + "/nap") : isFresh(v) ? el("span", { class: "grow", style: "background:var(--heat)" }, "friss") : null),
           el("div", { class: "vname" }, v.author_name || "?"),
           el("div", { class: "vsub" }, `♥ ${short(v.like_count)}` + (v.upload_time ? " · " + ago(v.upload_time) : "")));
       })),
