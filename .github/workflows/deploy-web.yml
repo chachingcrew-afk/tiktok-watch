@@ -1,0 +1,32 @@
+name: Deploy website to Netlify
+
+# Run by hand with a short-lived deploy link from Netlify (never stored in the repo).
+on:
+  workflow_dispatch:
+    inputs:
+      site_id:
+        description: 'Netlify site id'
+        required: true
+        type: string
+      proxy_path:
+        description: 'Netlify deploy proxy path (short-lived)'
+        required: true
+        type: string
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Deploy web/
+        working-directory: web
+        env:
+          SITE_ID: ${{ inputs.site_id }}
+          PROXY_PATH: ${{ inputs.proxy_path }}
+        run: |
+          echo "::add-mask::$PROXY_PATH"
+          npx -y @netlify/mcp@latest --site-id "$SITE_ID" --proxy-path "$PROXY_PATH"

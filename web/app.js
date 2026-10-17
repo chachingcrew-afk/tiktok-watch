@@ -1,0 +1,660 @@
+(() => {
+  "use strict";
+  const CFG = window.TR_CONFIG;
+  const sb = window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { auth: { persistSession: true, detectSessionInUrl: true } });
+
+  // ---------- helpers ----------
+  const $ = (id) => document.getElementById(id);
+  const fmt = new Intl.NumberFormat("hu-HU");
+  const nf = (n) => n == null || isNaN(n) ? "–" : fmt.format(Math.round(n));
+  const short = (n) => {
+    if (n == null || isNaN(n)) return "–";
+    n = Number(n);
+    const a = Math.abs(n);
+    if (a >= 1e9) return (n / 1e9).toFixed(1).replace(".", ",") + " Mrd";
+    if (a >= 1e6) return (n / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace(".", ",") + "M";
+    if (a >= 1e4) return Math.round(n / 1e3) + "e";
+    return fmt.format(Math.round(n));
+  };
+  const dec = (n, d = 1) => n == null || isNaN(n) ? "–" : Number(n).toFixed(d).replace(".", ",");
+  const money = (n) => n == null || isNaN(n) ? "–" : "$" + (Math.abs(n) >= 1e6 ? short(n) : nf(n));
+  const usd = (n) => n == null || isNaN(n) ? "–" : "$" + Number(n).toFixed(2);
+  const pct = (n) => n == null || isNaN(n) ? "–" : (Number(n) >= 10 ? Math.round(n) : dec(n)) + "%";
+  const ago = (iso) => {
+    if (!iso) return "–";
+    const h = (Date.now() - new Date(iso).getTime()) / 36e5;
+    if (h < 1) return Math.max(1, Math.round(h * 60)) + " perce";
+    if (h < 48) return Math.round(h) + " órája";
+    if (h < 24 * 60) return Math.round(h / 24) + " napja";
+    return Math.round(h / 24 / 30) + " hónapja";
+  };
+  const when = (ms) => new Date(ms).toLocaleString("hu-HU", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const ageText = (h) => h == null ? "–" : h < 48 ? Math.round(h) + " ó" : Math.round(h / 24) + " nap";
+  function el(tag, attrs, ...kids) {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v == null || v === false) continue;
+      if (k === "class") n.className = v;
+      else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+      else n.setAttribute(k, v === true ? "" : v);
+    }
+    for (const c of kids.flat()) if (c != null && c !== false) n.append(c instanceof Node ? c : document.createTextNode(String(c)));
+    return n;
+  }
+  const store = {
+    get(k) { try { return localStorage.getItem("tr-" + k); } catch (_) { return null; } },
+    set(k, v) { try { localStorage.setItem("tr-" + k, v); } catch (_) {} },
+  };
+  let bannerTimer;
+  function banner(text, isErr, action) {
+    const b = $("banner"); clearTimeout(bannerTimer);
+    if (!text) { b.hidden = true; return; }
+    b.className = "banner" + (isErr ? " err" : "");
+    b.replaceChildren(el("span", {}, text), action ? el("button", { type: "button", class: "btn", onclick: () => { b.hidden = true; action.fn(); } }, action.label) : null);
+    b.hidden = false;
+    if (!isErr || action) bannerTimer = setTimeout(() => { b.hidden = true; }, 9000);
+  }
+  async function rpc(fn, args) {
+    const { data, error } = await sb.rpc(fn, args || {});
+    if (error) throw error;
+    return data;
+  }
+  const errText = (e) => (e && e.code === "42501") ? "Ehhez a fiókhoz nincs hozzáférés." : "Hiba történt: " + ((e && e.message) || "ismeretlen hiba");
+
+  // CDN image in a given size (TikTok's image CDN resizes on the fly)
+  const sized = (url, size) => url ? url.replace(/~tplv-([a-z0-9]+)-[a-z-]+(?::\d+:\d+)?\.(webp|jpeg|jpg|png|image)/, `~tplv-$1-crop-webp:${size}:${size}.webp`) : null;
+
+  // ---------- auth ----------
+  async function boot() {
+    const { data } = await sb.auth.getSession();
+    if (data.session) startApp(data.session); else showLogin();
+    sb.auth.onAuthStateChange((ev, session) => {
+      if (ev === "SIGNED_IN" && session && $("app").hidden) startApp(session);
+      if (ev === "SIGNED_OUT") showLogin();
+    });
+  }
+  function showLogin(msg) {
+    $("app").hidden = true; $("login").hidden = false;
+    if (msg) $("login-note").textContent = msg;
+  }
+  $("login-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = $("login-email").value.trim();
+    if (!email) return;
+    $("login-btn").disabled = true; $("login-note").textContent = "Küldés…";
+    const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
+    $("login-btn").disabled = false;
+    $("login-note").textContent = error ? "Nem sikerült elküldeni: " + error.message : "Elküldtük. Nyisd meg az e-mailben kapott linket ezen az eszközön.";
+  });
+  $("logout").addEventListener("click", async () => { await sb.auth.signOut(); location.reload(); });
+
+  // ---------- state ----------
+  let state = { shop: [], videos: [], history: {}, runs: [], settings: {} };
+  const P = { seg: store.get("seg") || "all", sort: store.get("sort") || "revenue_per_day", q: "", cat: "", pmin: null, pmax: null, page: 0, sel: null };
+  const V = { seg: "tracking", sort: "recent_views_per_hour", q: "" };
+  const PAGE = 50;
+  const cache = { thumbs: {}, gallery: {}, videos: {}, hist: {} };
+
+  async function startApp(session) {
+    $("login").hidden = true; $("app").hidden = false;
+    $("user-email").textContent = session.user.email;
+    selectView(store.get("view") || "products");
+    await load();
+  }
+
+  async function load() {
+    $("refresh").disabled = true; $("refresh").textContent = "Frissítés…";
+    try {
+      state = await rpc("tr_load");
+      state.shop = state.shop || []; state.videos = state.videos || []; state.history = state.history || {};
+      state.runs = state.runs || []; state.settings = state.settings || {};
+      brandCache = new WeakMap();
+      banner(null);
+      renderAll();
+    } catch (e) {
+      if (e && e.code === "42501") { await sb.auth.signOut(); showLogin("Ez az e-mail cím nem fér hozzá az oldalhoz."); return; }
+      banner(errText(e), true, { label: "Újra", fn: load });
+    } finally {
+      $("refresh").disabled = false; $("refresh").textContent = "Frissítés";
+    }
+  }
+  $("refresh").addEventListener("click", load);
+
+  function renderAll() {
+    renderStatus(); renderKpis(); renderSeg(); renderCats(); renderTable();
+    renderVideos(); renderRuns(); if (!dirty) renderSettings();
+  }
+
+  // ---------- navigation ----------
+  function selectView(v) {
+    if (!["products", "videos", "runs", "settings"].includes(v)) v = "products";
+    for (const b of document.querySelectorAll(".nav-item")) {
+      if (b.dataset.view === v) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+    }
+    for (const s of ["products", "videos", "runs", "settings"]) $("view-" + s).hidden = s !== v;
+    store.set("view", v);
+  }
+  for (const b of document.querySelectorAll(".nav-item")) b.addEventListener("click", () => selectView(b.dataset.view));
+
+  function renderStatus() {
+    const jobs = [["shop", "Termékkeresés"], ["shop_track", "Eladásmérés"], ["videos", "Termékvideók"], ["collect", "Videógyűjtés"], ["track", "Videómérés"]];
+    $("side-status").replaceChildren(...jobs.map(([job, label]) => {
+      const r = state.runs.find(x => x.job === job);
+      let dot = "dot", txt = "még nem futott";
+      if (r) {
+        if (!r.finished_at) { dot = "dot run"; txt = "fut"; }
+        else if (r.ok) { dot = "dot ok"; txt = ago(r.finished_at); }
+        else { dot = "dot err"; txt = "hiba, " + ago(r.finished_at); }
+      }
+      return el("div", { title: r && r.error ? r.error : null }, el("span", { class: dot }), el("b", {}, label), txt);
+    }));
+  }
+
+  // ---------- products: rules ----------
+  const SEGMENTS = [["all", "Ársávban"], ["win", "Nyerő"], ["rising", "Felfutó"], ["accel", "Gyorsul"], ["multi", "Több boltnál"], ["starred", "Csillagos"], ["new", "Új"], ["brand", "Márkás"], ["hidden", "Elrejtett"]];
+  const TIPS = {
+    win: () => `Legalább $${nf(setting("shop_min_revenue_day"))} bevétel naponta`,
+    rising: () => "Naponta legalább 5%-kal nő az eddigi eladásaihoz képest",
+    accel: () => "Ma legalább 1,2-szer annyit adnak el, mint előző nap",
+    multi: () => "Ugyanezt a terméket más eladó is árulja: közös gyárból jöhet, valószínűleg beszerezhető",
+    brand: () => "Ismert márkák saját termékei, ezek nem dropshippelhetők. A többi listából kimaradnak.",
+    new: () => "Az elmúlt 30 órában felfedezett termékek",
+  };
+  const DEFAULTS = { shop_min_price: 30, shop_max_price: 70, shop_min_revenue_day: 1000, shop_fetches_per_category: 3, shop_track_min_sold: 100 };
+  const setting = (k) => { const v = state.settings[k]; return v != null ? Number(v) : DEFAULTS[k]; };
+  const DEFAULT_BRANDS = ["VEVOR","Merach","Anker","Soundcore","eufy","Ninja","Shark","SharkNinja","Dyson","Bissell","Hoover","iRobot","Roborock","Tineco","Keurig","Cuisinart","KitchenAid","Hamilton Beach","Instant Pot","Instant","COSORI","Chefman","BLACK+DECKER","DEWALT","Milwaukee","Makita","Ryobi","Bosch","Philips","Braun","Oral-B","Waterpik","Conair","Revlon","Remington","Wahl","Andis","BaBylissPRO","Laifen","Panasonic","Samsung","Apple","JBL","Sony","Bose","Beats","Logitech","Garmin","Fitbit","Coleman","YETI","Stanley","Hydro Flask","Owala","Lodge","OXO","Rubbermaid","Sunbeam","Igloo","Theragun","Therabody","Hyperice","RENPHO","Bowflex","Gorilla Grip","Amazon Basics","LEGO","Hasbro","Mattel","Nerf","Fisher-Price","Crayola","Furbo","PetSafe","Cricut","BlendJet","Medicube","Govee","TP-Link","Ring","Blink","Wyze","Ecovacs","Dreame","Xiaomi","Ugreen","Baseus","Belkin","OtterBox","Spigen","Casetify","Shokz","Soundpeats","Sterilite","Mueller","Gourmia","Bella","Dash","Bear","AquaSonic","Snow","Crest","Sol de Janeiro","CeraVe","Olaplex","T3","GHD"];
+  const BRAND_AMBIGUOUS = new Set(["Dash", "Bear", "Snow", "Instant", "Ring", "Bella"]);
+  let brandCache = new WeakMap();
+  const brandList = () => Array.isArray(state.settings.known_brands) && state.settings.known_brands.length ? state.settings.known_brands : DEFAULT_BRANDS;
+  const normShop = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const reEsc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  function brandOf(p) {
+    if (brandCache.has(p)) return brandCache.get(p);
+    let hit = null;
+    const title = String(p.title || "").replace(/^(\s|【[^】]*】|\[[^\]]*\]|\([^)]*\))+/, ""), shop = normShop(p.shop_name);
+    for (const b of brandList()) {
+      const nb = normShop(b);
+      if (!nb) continue;
+      const shopHit = !!shop && [nb, nb + "official", nb + "officialstore", nb + "store", nb + "us", nb + "usa", nb + "direct"].includes(shop);
+      const titleHit = !BRAND_AMBIGUOUS.has(b) && new RegExp("^" + reEsc(b) + "(?![a-z0-9])", "i").test(title);
+      if (shopHit || titleHit) { hit = b; break; }
+    }
+    brandCache.set(p, hit);
+    return hit;
+  }
+  const priceMin = () => P.pmin != null ? P.pmin : setting("shop_min_price");
+  const priceMax = () => P.pmax != null ? P.pmax : setting("shop_max_price");
+  const inBand = (p) => p.price != null && Number(p.price) >= priceMin() && Number(p.price) <= priceMax();
+  const isWin = (p) => Number(p.revenue_per_day) >= setting("shop_min_revenue_day");
+  const isNew = (p) => p.first_seen && Date.now() - new Date(p.first_seen).getTime() < 30 * 36e5;
+  function segFilter(seg) {
+    return (p) => {
+      if (seg === "hidden") return p.hidden;
+      if (p.hidden) return false;
+      if (seg === "starred") return p.starred;
+      if (seg === "brand") return !!brandOf(p) && inBand(p);
+      if (brandOf(p)) return false;
+      if (!inBand(p) && !p.starred) return false;
+      if (seg === "win") return isWin(p);
+      if (seg === "rising") return Number(p.growth_pct) >= 5;
+      if (seg === "accel") return Number(p.trend) > 1.2 && Number(p.sold_per_day) >= 10;
+      if (seg === "multi") return Number(p.other_shops) > 0;
+      if (seg === "new") return isNew(p);
+      return true;
+    };
+  }
+  function rows() {
+    const q = P.q.trim().toLowerCase();
+    let list = state.shop.filter(segFilter(P.seg));
+    if (P.cat) list = list.filter(p => p.category_id === P.cat);
+    if (q) list = list.filter(p => [p.title, p.shop_name, p.category_name].some(s => (s || "").toLowerCase().includes(q)));
+    const key = (p) => P.sort === "first_seen" ? new Date(p.first_seen).getTime() : Number(p[P.sort] ?? NaN);
+    return list.sort((a, b) => {
+      const x = key(a), y = key(b);
+      return ((isNaN(y) ? -Infinity : y) - (isNaN(x) ? -Infinity : x)) || (Number(b.sold_now) || 0) - (Number(a.sold_now) || 0);
+    });
+  }
+
+  // ---------- products: render ----------
+  function renderKpis() {
+    const live = state.shop.filter(p => !p.hidden && inBand(p) && !brandOf(p));
+    const measured = live.filter(p => p.sold_per_day != null);
+    const best = live.reduce((m, p) => Number(p.revenue_per_day) > (m ? Number(m.revenue_per_day) : -1) ? p : m, null);
+    const totalRev = measured.reduce((s, p) => s + (Number(p.revenue_per_day) || 0), 0);
+    const cards = [
+      ["", "Termék a sávban", nf(live.length), `$${priceMin()}–${priceMax()}, márkák nélkül`],
+      ["money", "Nyerő termék", nf(live.filter(isWin).length), `legalább $${nf(setting("shop_min_revenue_day"))}/nap`],
+      ["money", "Legjobb napi bevétel", best && best.revenue_per_day != null ? money(best.revenue_per_day) : "–", best ? String(best.title || "").slice(0, 38) : "még nincs mérés"],
+      ["heat", "Felfutó", nf(live.filter(p => Number(p.growth_pct) >= 5).length), `${nf(measured.length)} mért termékből, össz. ${money(totalRev)}/nap`],
+    ];
+    $("kpis").replaceChildren(...cards.map(([c, l, v, s]) => el("div", { class: "kpi " + c }, el("span", {}, l), el("b", {}, v), el("small", {}, s))));
+  }
+  function renderSeg() {
+    $("seg").replaceChildren(...SEGMENTS.map(([k, label]) => el("button", {
+      type: "button", class: "tab", role: "tab", "aria-selected": String(P.seg === k), title: TIPS[k] ? TIPS[k]() : null,
+      onclick: () => { P.seg = k; P.page = 0; store.set("seg", k); renderSeg(); renderTable(); },
+    }, label, el("em", {}, nf(state.shop.filter(segFilter(k)).length)))));
+  }
+  function renderCats() {
+    const counts = new Map();
+    for (const p of state.shop) if (!p.hidden && p.category_id) counts.set(p.category_id, { name: p.category_name || p.category_id, n: (counts.get(p.category_id)?.n || 0) + 1 });
+    const opts = [...counts.entries()].sort((a, b) => a[1].name.localeCompare(b[1].name, "hu"));
+    $("cat").replaceChildren(el("option", { value: "" }, "Minden kategória"), ...opts.map(([id, c]) => el("option", { value: id }, `${c.name} (${c.n})`)));
+    $("cat").value = P.cat;
+    $("pmin").placeholder = "Ár min " + setting("shop_min_price"); $("pmax").placeholder = "max " + setting("shop_max_price");
+    $("sort").value = P.sort;
+  }
+  function img(p, size) {
+    const box = el("div", { class: "pimg" });
+    const fallback = () => {
+      if (cache.thumbs[p.product_id]) box.replaceChildren(el("img", { src: "data:image/webp;base64," + cache.thumbs[p.product_id], alt: "" }));
+      else { box.replaceChildren("▢"); queueThumb(p.product_id, box); }
+    };
+    if (p.image) {
+      const i = el("img", { src: sized(p.image, size || 160), alt: "", loading: "lazy", referrerpolicy: "no-referrer" });
+      i.addEventListener("error", fallback, { once: true });
+      box.append(i);
+    } else fallback();
+    return box;
+  }
+  let thumbQueue = new Map(), thumbTimer = null;
+  function queueThumb(id, box) {
+    thumbQueue.set(id, (thumbQueue.get(id) || []).concat(box));
+    clearTimeout(thumbTimer);
+    thumbTimer = setTimeout(async () => {
+      const q = thumbQueue; thumbQueue = new Map();
+      try {
+        const rowsT = await rpc("tr_thumbs", { p_ids: [...q.keys()] });
+        for (const r of rowsT || []) {
+          cache.thumbs[r.product_id] = r.thumb;
+          for (const b of q.get(r.product_id) || []) b.replaceChildren(el("img", { src: "data:image/webp;base64," + r.thumb, alt: "" }));
+        }
+      } catch (_) {}
+    }, 150);
+  }
+  const growthChip = (p) => {
+    if (p.trend == null) return null;
+    const t = Number(p.trend);
+    if (t > 1.2) return el("span", { class: "chip heat" }, "gyorsul ×" + dec(t));
+    if (t < 0.8) return el("span", { class: "chip" }, "lassul ×" + dec(t));
+    return null;
+  };
+  function starBtn(p, onToggle) {
+    return el("button", { type: "button", class: "star", "aria-pressed": String(!!p.starred), "aria-label": p.starred ? "Csillag levétele" : "Csillagozás",
+      onclick: (e) => { e.stopPropagation(); onToggle(p); } }, p.starred ? "★" : "☆");
+  }
+  function renderTable() {
+    for (const th of document.querySelectorAll("#ptable th.sortable")) th.toggleAttribute("aria-sort", th.dataset.sort === P.sort);
+    const list = rows();
+    const pages = Math.max(1, Math.ceil(list.length / PAGE));
+    P.page = Math.min(P.page, pages - 1);
+    const slice = list.slice(P.page * PAGE, P.page * PAGE + PAGE);
+    if (!slice.length) {
+      const msg = state.shop.length ? ["Nincs találat", "Próbálj más szűrőt, kategóriát vagy keresőszót."] : ["Még nincs termék", "A reggeli termékkeresés után itt lesznek a TikTok Shop termékek."];
+      $("prows").replaceChildren(el("tr", {}, el("td", { colspan: 9, class: "empty" }, el("b", {}, msg[0]), msg[1])));
+    } else {
+      $("prows").replaceChildren(...slice.map((p, i) => productRow(p, P.page * PAGE + i + 1)));
+    }
+    $("pager").replaceChildren(
+      el("span", {}, list.length ? `${nf(P.page * PAGE + 1)}–${nf(Math.min(list.length, (P.page + 1) * PAGE))} / ${nf(list.length)} termék` : ""),
+      el("div", { class: "pg" },
+        el("button", { type: "button", class: "btn", disabled: P.page === 0 || null, onclick: () => { P.page--; renderTable(); window.scrollTo({ top: 0 }); } }, "‹ Előző"),
+        el("button", { type: "button", class: "btn", disabled: P.page >= pages - 1 || null, onclick: () => { P.page++; renderTable(); window.scrollTo({ top: 0 }); } }, "Következő ›")));
+  }
+  function productRow(p, rank) {
+    const meta = [];
+    if (brandOf(p)) meta.push(el("span", { class: "chip" }, "Márkás"));
+    if (Number(p.other_shops) > 0) meta.push(el("span", { class: "chip money", title: (p.twin_shops || []).join(", ") }, `${Number(p.other_shops) + 1} boltnál`));
+    if (isWin(p)) meta.push(el("span", { class: "chip money" }, "Nyerő"));
+    if (isNew(p)) meta.push(el("span", { class: "chip blue" }, "Új"));
+    meta.push(el("span", {}, [p.category_name, p.shop_name].filter(Boolean).join(" · ")));
+    const orig = p.price_original && Number(p.price_original) > Number(p.price) ? Number(p.price_original) : null;
+    return el("tr", { class: P.sel === p.product_id ? "sel" : null, onclick: () => openProduct(p.product_id) },
+      el("td", { class: "c-star" }, starBtn(p, toggleProductStar)),
+      el("td", { class: "c-prod" }, el("div", { class: "prod" }, img(p, 160),
+        el("div", { style: "min-width:0" }, el("div", { class: "ptitle" }, p.title || "Névtelen termék"), el("div", { class: "pmeta" }, ...meta)))),
+      el("td", { class: "r" }, el("div", { class: "big" }, usd(p.price)), orig ? el("div", { class: "small" }, el("s", {}, usd(orig))) : null),
+      el("td", { class: "r" }, p.sold_per_day != null ? el("div", { class: "big" }, "+" + nf(p.sold_per_day)) : el("span", { class: "na" }, "mérés folyik"),
+        p.sold_per_day_recent != null ? el("div", { class: "small" }, "most " + short(p.sold_per_day_recent) + "/nap") : null),
+      el("td", { class: "r" }, p.revenue_per_day != null ? el("div", { class: "big money" }, money(p.revenue_per_day)) : el("span", { class: "na" }, "–"),
+        p.revenue_per_day != null ? el("div", { class: "small" }, "≈ " + money(Number(p.revenue_per_day) * 30) + "/hó") : null),
+      el("td", { class: "r" }, p.growth_pct != null ? el("div", { class: "big" + (Number(p.growth_pct) >= 5 ? " pos" : "") }, "+" + pct(p.growth_pct)) : el("span", { class: "na" }, "–"), growthChip(p)),
+      el("td", { class: "r" }, el("div", { class: "big" }, short(p.sold_now)), el("div", { class: "small" }, "db")),
+      el("td", { class: "r" }, p.video_count ? [el("div", { class: "big" }, short(p.video_views)), el("div", { class: "small" }, `${nf(p.video_count)} videó`)] : el("span", { class: "na" }, "–")),
+      el("td", { class: "r" }, p.rating ? [el("div", { class: "big" }, "★ " + dec(p.rating)), el("div", { class: "small" }, short(p.reviews) + " vél.")] : el("span", { class: "na" }, "–")));
+  }
+
+  // toolbar events
+  $("q").addEventListener("input", () => { P.q = $("q").value; P.page = 0; renderTable(); });
+  $("cat").addEventListener("change", () => { P.cat = $("cat").value; P.page = 0; renderTable(); });
+  $("sort").addEventListener("change", () => { P.sort = $("sort").value; store.set("sort", P.sort); renderTable(); });
+  for (const id of ["pmin", "pmax"]) $(id).addEventListener("change", () => {
+    const v = $(id).value.trim();
+    P[id] = v === "" ? null : Number(v);
+    P.page = 0; renderKpis(); renderSeg(); renderTable();
+  });
+  for (const th of document.querySelectorAll("#ptable th.sortable")) th.addEventListener("click", () => { P.sort = th.dataset.sort; $("sort").value = P.sort; store.set("sort", P.sort); renderTable(); });
+
+  async function toggleProductStar(p) {
+    const next = !p.starred; p.starred = next; renderSeg(); renderTable(); if (P.sel === p.product_id) renderDrawer();
+    try { await rpc("tr_set_product", { p_product_id: p.product_id, p_starred: next }); }
+    catch (e) { p.starred = !next; banner("Nem sikerült menteni a csillagot. " + errText(e), true); renderSeg(); renderTable(); }
+  }
+  async function setProductHidden(p, hide) {
+    const prev = { hidden: p.hidden, starred: p.starred };
+    p.hidden = hide; if (hide) p.starred = false;
+    if (hide) closeDrawer();
+    renderKpis(); renderSeg(); renderTable();
+    try {
+      await rpc("tr_set_product", { p_product_id: p.product_id, p_hidden: hide });
+      banner((hide ? "Elrejtve: " : "Visszaállítva: ") + String(p.title || "").slice(0, 60), false, hide ? { label: "Visszavonás", fn: () => setProductHidden(p, false) } : null);
+    } catch (e) { Object.assign(p, prev); banner("Nem sikerült menteni. " + errText(e), true); renderSeg(); renderTable(); }
+  }
+
+  // ---------- product drawer ----------
+  let galIdx = 0;
+  function openProduct(id) { P.sel = id; galIdx = 0; $("drawer").hidden = false; $("scrim").hidden = false; document.body.style.overflow = "hidden"; renderDrawer(); renderTable(); $("drawer").scrollTop = 0; }
+  function closeDrawer() { P.sel = null; $("drawer").hidden = true; $("scrim").hidden = true; document.body.style.overflow = ""; renderTable(); }
+  $("scrim").addEventListener("click", closeDrawer);
+  document.addEventListener("keydown", (e) => {
+    if ($("drawer").hidden) return;
+    if (e.key === "Escape") closeDrawer();
+    if (e.key === "ArrowRight") stepGallery(1);
+    if (e.key === "ArrowLeft") stepGallery(-1);
+  });
+  const current = () => state.shop.find(x => x.product_id === P.sel);
+
+  async function ensure(kind, id, fn) {
+    if (cache[kind][id] !== undefined) return;
+    cache[kind][id] = null;
+    try { cache[kind][id] = await fn(); } catch (_) { cache[kind][id] = false; }
+    if (P.sel === id) renderDrawer();
+  }
+  function renderDrawer() {
+    const p = current(), d = $("drawer");
+    if (!p) { closeDrawer(); return; }
+    const id = p.product_id;
+    if (p.gallery_count) ensure("gallery", id, async () => (await rpc("tr_gallery", { p_product_id: id }) || []).map(r => r.data));
+    ensure("hist", id, () => rpc("tr_sales_history", { p_product_id: id }));
+    if (p.video_count) ensure("videos", id, () => rpc("tr_product_videos", { p_product_id: id }));
+    const orig = p.price_original && Number(p.price_original) > Number(p.price) ? Number(p.price_original) : null;
+    const stat = (v, l, c) => el("div", { class: "stat " + (c || "") }, el("b", {}, v), el("span", {}, l));
+    const brand = brandOf(p);
+    d.replaceChildren(
+      el("div", { class: "d-top" }, el("span", { class: "crumbs" }, [p.category_name, p.shop_name].filter(Boolean).join(" · ")),
+        el("button", { type: "button", class: "icon-btn", "aria-label": "Bezárás", onclick: closeDrawer }, "×")),
+      el("div", { class: "d-hero" }, galleryEl(p),
+        el("div", { class: "d-info" },
+          el("h2", {}, p.title || "Névtelen termék"),
+          el("div", { class: "d-price" }, usd(p.price), orig ? el("s", {}, usd(orig)) : null),
+          el("div", { class: "pmeta" }, p.rating ? el("span", {}, `★ ${dec(p.rating)} · ${nf(p.reviews)} vélemény`) : null,
+            brand ? el("span", { class: "chip" }, "Márkás: " + brand) : null,
+            Number(p.other_shops) > 0 ? el("span", { class: "chip money" }, `${Number(p.other_shops) + 1} boltnál`) : null),
+          el("div", { class: "d-actions" },
+            el("button", { type: "button", class: "btn" + (p.starred ? " on" : ""), onclick: () => toggleProductStar(p) }, p.starred ? "★ Csillagozva" : "☆ Csillagozás"),
+            p.hidden ? el("button", { type: "button", class: "btn", onclick: () => setProductHidden(p, false) }, "Visszaállítás")
+                     : el("button", { type: "button", class: "btn danger", onclick: () => setProductHidden(p, true) }, "Elrejtés"),
+            p.url ? el("a", { class: "btn", href: p.url, target: "_blank", rel: "noopener" }, "TikTok Shop ↗") : null,
+            p.image ? el("a", { class: "btn", href: "https://lens.google.com/uploadbyurl?url=" + encodeURIComponent(p.image), target: "_blank", rel: "noopener", title: "Képkeresés: kik árulják még, például AliExpressen" }, "Hol árulják még? ↗") : null),
+          brand ? el("div", { class: "d-note" }, `Ismert márka (${brand}): saját tervezésű és gyártású termék, nem dropshippelhető.`) : null,
+          Number(p.other_shops) > 0 ? el("div", { class: "d-note" }, `Más eladók is árulják: ${(p.twin_shops || []).join(", ")}. Valószínűleg közös gyárból jön.`) : null)),
+      el("div", { class: "d-sec" },
+        el("h3", {}, "Eladás", el("span", {}, p.sold_checked_at ? "mérve " + ago(p.sold_checked_at) : "")),
+        el("div", { class: "stats" },
+          stat(p.revenue_per_day != null ? money(p.revenue_per_day) : "–", "napi bevétel", isWin(p) ? "money" : ""),
+          stat(p.sold_per_day != null ? "+" + nf(p.sold_per_day) : "–", "eladás naponta"),
+          stat(p.sold_per_day_recent != null ? "+" + nf(p.sold_per_day_recent) : "–", "mostani tempó (6 óra)", p.sold_per_day_recent != null && Number(p.sold_per_day_recent) > Number(p.sold_per_day) * 1.2 ? "heat" : ""),
+          stat(p.revenue_per_day != null ? money(Number(p.revenue_per_day) * 30) : "–", "becsült havi bevétel"),
+          stat(short(p.sold_now), "eladva összesen"),
+          stat(p.growth_pct != null ? "+" + pct(p.growth_pct) : "–", "növekedés naponta", Number(p.growth_pct) >= 5 ? "heat" : ""),
+          stat(p.trend != null ? "×" + dec(p.trend) : "–", "tempó az előző naphoz", Number(p.trend) > 1.2 ? "heat" : ""),
+          stat(p.sold_per_day_week != null ? "+" + nf(p.sold_per_day_week) : "–", "napi átlag a héten")),
+        salesChart(cache.hist[id]),
+        el("div", { class: "d-note" }, "A bevétel a mostani ár és a napi eladott darab szorzata, a TikTok Shop eladásszámából. A növekedés: a napi eladás az addig eladott darabok hány százaléka.")),
+      videosSection(p));
+  }
+  function galleryEl(p) {
+    const imgs = cache.gallery[p.product_id];
+    const list = Array.isArray(imgs) && imgs.length ? imgs.map(b => "data:image/webp;base64," + b) : (p.image ? [sized(p.image, 600)] : []);
+    if (galIdx >= list.length) galIdx = 0;
+    const main = el("div", { class: "gal-main" });
+    if (list.length) main.append(el("img", { src: list[galIdx], alt: p.title || "", referrerpolicy: "no-referrer" }));
+    else main.append("Nincs kép");
+    if (list.length > 1) main.append(
+      el("button", { type: "button", class: "gal-nav prev", "aria-label": "Előző kép", onclick: () => stepGallery(-1) }, "‹"),
+      el("button", { type: "button", class: "gal-nav next", "aria-label": "Következő kép", onclick: () => stepGallery(1) }, "›"),
+      el("span", { class: "gal-count" }, `${galIdx + 1} / ${list.length}`));
+    const strip = list.length > 1 ? el("div", { class: "gal-strip" }, ...list.map((src, i) => el("button", { type: "button", "aria-current": String(i === galIdx), "aria-label": `${i + 1}. kép`, onclick: () => { galIdx = i; renderDrawer(); } }, el("img", { src, alt: "" })))) : null;
+    return el("div", { class: "gal" }, main, strip);
+  }
+  function stepGallery(d) {
+    const p = current(); if (!p) return;
+    const imgs = cache.gallery[p.product_id];
+    const n = Array.isArray(imgs) && imgs.length ? imgs.length : 1;
+    if (n < 2) return;
+    galIdx = (galIdx + d + n) % n; renderDrawer();
+  }
+  function videosSection(p) {
+    const head = el("h3", {}, "Videók ehhez a termékhez", el("span", {}, p.video_count ? `${nf(p.video_count)} videó · ${short(p.video_views)} nézés · ${short(p.video_likes)} lájk` : ""));
+    if (!p.video_count) return el("div", { class: "d-sec" }, head, el("div", { class: "d-note" }, p.video_count === 0 ? "A TikTok Shop nem mutat videót ehhez a termékhez." : "A videókat a napi futás tölti le a 100+ eladásos és a csillagozott termékekhez."));
+    const vids = cache.videos[p.product_id];
+    if (!Array.isArray(vids)) return el("div", { class: "d-sec" }, head, el("div", { class: "d-note" }, vids === false ? "Nem sikerült betölteni a videókat." : "Videók betöltése…"));
+    return el("div", { class: "d-sec" }, head,
+      el("div", { class: "vgrid" }, ...vids.map(v => {
+        const days = v.prev_checked_at ? Math.max((new Date(v.checked_at) - new Date(v.prev_checked_at)) / 864e5, 0.25) : null;
+        const grow = days && v.prev_play_count != null ? (Number(v.play_count) - Number(v.prev_play_count)) / days : null;
+        return el("a", { class: "vcard", href: "https://www.tiktok.com/@/video/" + v.item_id, target: "_blank", rel: "noopener", title: v.title || "" },
+          el("div", { class: "vcover" }, v.cover ? el("img", { src: "data:image/jpeg;base64," + v.cover, alt: "" }) : "▶",
+            el("span", { class: "views" }, "▶ " + short(v.play_count)), grow > 0 ? el("span", { class: "grow" }, "+" + short(grow) + "/nap") : null),
+          el("div", { class: "vname" }, v.author_name || "?"),
+          el("div", { class: "vsub" }, `♥ ${short(v.like_count)}` + (v.upload_time ? " · " + ago(v.upload_time) : "")));
+      })),
+      el("div", { class: "d-note" }, "A TikTok Shop termékoldalán látható videók, nézettség szerint. Kommentszámot a TikTok itt nem ad."));
+  }
+
+  // ---------- charts ----------
+  const NS = "http://www.w3.org/2000/svg";
+  const svgEl = (n, a) => { const x = document.createElementNS(NS, n); for (const [k, v] of Object.entries(a)) x.setAttribute(k, v); return x; };
+  function lineChart(points, color, label, emptyText) {
+    const w = 600, h = 170, L = 50, R = 10, T = 10, B = 24;
+    const svg = svgEl("svg", { viewBox: `0 0 ${w} ${h}`, class: "chart", role: "img" });
+    if (!Array.isArray(points) || points.length < 2) {
+      const t = svgEl("text", { x: w / 2, y: h / 2, "text-anchor": "middle", fill: "var(--muted)", "font-size": 13 });
+      t.textContent = points === undefined || points === null ? "Betöltés…" : emptyText; svg.append(t); return svg;
+    }
+    const xs = points.map(q => q[0]), ys = points.map(q => Number(q[1]));
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    const sx = x => L + (x - x0) / Math.max(x1 - x0, 1) * (w - L - R), sy = y => T + (1 - (y - y0) / Math.max(y1 - y0, 1)) * (h - T - B);
+    for (const v of (y1 > y0 ? [y0, (y0 + y1) / 2, y1] : [y0])) {
+      svg.append(svgEl("line", { x1: L, x2: w - R, y1: sy(v), y2: sy(v), stroke: "var(--line)", "stroke-width": 1 }));
+      const t = svgEl("text", { x: L - 6, y: sy(v) + 4, "text-anchor": "end", fill: "var(--muted)", "font-size": 11 }); t.textContent = short(v); svg.append(t);
+    }
+    for (const [x, a] of [[x0, "start"], [x1, "end"]]) { const t = svgEl("text", { x: sx(x), y: h - 6, "text-anchor": a, fill: "var(--muted)", "font-size": 11 }); t.textContent = when(x * 1000); svg.append(t); }
+    const d = points.map((q, i) => (i ? "L" : "M") + sx(q[0]).toFixed(1) + " " + sy(Number(q[1])).toFixed(1)).join(" ");
+    svg.append(svgEl("path", { d: d + ` L${sx(x1)} ${h - B} L${sx(x0)} ${h - B} Z`, fill: color, opacity: .1, stroke: "none" }));
+    svg.append(svgEl("path", { d, fill: "none", stroke: color, "stroke-width": 2.2, "stroke-linejoin": "round" }));
+    points.forEach(q => svg.append(svgEl("circle", { cx: sx(q[0]), cy: sy(Number(q[1])), r: 2.6, fill: color })));
+    svg.setAttribute("aria-label", `${label}: ${nf(ys[0])} → ${nf(ys[ys.length - 1])}`);
+    return svg;
+  }
+  const salesChart = (pts) => lineChart(pts, "var(--money)", "Eladott darab", "A görbe a második mérés után rajzolódik ki.");
+
+  // ---------- videos (radar) ----------
+  const VSEG = [["tracking", "Követett"], ["accel", "Gyorsul"], ["starred", "Csillagos"], ["out", "Kiesett"], ["hidden", "Elrejtett"]];
+  const isOut = (v) => v.status !== "tracking";
+  function vFilter(seg) {
+    return (v) => {
+      if (seg === "hidden") return v.hidden;
+      if (v.hidden) return false;
+      if (seg === "tracking") return !isOut(v);
+      if (seg === "accel") return !isOut(v) && Number(v.acceleration) > 1;
+      if (seg === "starred") return v.starred;
+      if (seg === "out") return isOut(v);
+      return true;
+    };
+  }
+  function renderVideos() {
+    $("vseg").replaceChildren(...VSEG.map(([k, l]) => el("button", { type: "button", class: "tab", role: "tab", "aria-selected": String(V.seg === k),
+      onclick: () => { V.seg = k; renderVideos(); } }, l, el("em", {}, nf(state.videos.filter(vFilter(k)).length)))));
+    const q = V.q.trim().toLowerCase();
+    let list = state.videos.filter(vFilter(V.seg));
+    if (q) list = list.filter(v => [v.product_title, v.description, v.author].some(s => (s || "").toLowerCase().includes(q)));
+    const key = (v) => V.sort === "newest" ? new Date(v.created_at_tt).getTime() : Number(v[V.sort]);
+    list.sort((a, b) => { const x = key(a), y = key(b); return (isNaN(y) ? -Infinity : y) - (isNaN(x) ? -Infinity : x); });
+    if (!list.length) { $("vrows").replaceChildren(el("tr", {}, el("td", { colspan: 8, class: "empty" }, el("b", {}, "Nincs videó ebben a nézetben"), "A reggeli gyűjtés után jelennek meg az új videók."))); return; }
+    $("vrows").replaceChildren(...list.map(v => {
+      const a = Number(v.acceleration);
+      const badge = v.status === "expired" ? el("span", { class: "chip" }, "lejárt") : v.status === "dropped" ? el("span", { class: "chip" }, "kiesett")
+        : v.acceleration == null ? el("span", { class: "chip blue" }, "új") : a > 1.2 ? el("span", { class: "chip heat" }, "gyorsul ×" + dec(a)) : a < .8 ? el("span", { class: "chip" }, "lassul") : el("span", { class: "chip" }, "egyenletes");
+      const price = v.product_price != null ? usd(v.product_price) : "–";
+      return el("tr", { onclick: () => window.open(v.url, "_blank", "noopener") },
+        el("td", { class: "c-star" }, starBtn(v, toggleVideoStar)),
+        el("td", { class: "c-prod" }, el("div", { class: "prod" }, img({ product_id: v.product_id, image: v.product_image }, 160),
+          el("div", { style: "min-width:0" }, el("div", { class: "ptitle" }, v.product_title || (v.description || "").replace(/#\w+/g, "").trim() || "Videó"),
+            el("div", { class: "pmeta" }, badge, el("span", {}, "@" + (v.author || "?")),
+              el("button", { type: "button", class: "link-btn", style: "color:var(--muted)", onclick: (e) => { e.stopPropagation(); setVideoHidden(v, !v.hidden); } }, v.hidden ? "visszaállítás" : "elrejtés"))))),
+        el("td", { class: "r" }, el("div", { class: "big" }, short(v.recent_views_per_hour ?? v.avg_views_per_hour) + "/ó")),
+        el("td", { class: "r" }, v.acceleration != null ? "×" + dec(v.acceleration) : "–"),
+        el("td", { class: "r" }, short(v.views)),
+        el("td", { class: "r" }, price),
+        el("td", { class: "r" }, v.product_sold != null ? [el("div", { class: "big" }, short(v.product_sold)), v.product_sold_per_day != null ? el("div", { class: "small pos" }, "+" + short(v.product_sold_per_day) + "/nap") : null] : "–"),
+        el("td", { class: "r small" }, ageText(v.age_hours)));
+    }));
+  }
+  $("vq").addEventListener("input", () => { V.q = $("vq").value; renderVideos(); });
+  $("vsort").addEventListener("change", () => { V.sort = $("vsort").value; renderVideos(); });
+  async function toggleVideoStar(v) {
+    const next = !v.starred; v.starred = next; renderVideos();
+    try { const st = await rpc("tr_set_video", { p_video_id: v.video_id, p_starred: next }); if (st) v.status = st; }
+    catch (e) { v.starred = !next; banner("Nem sikerült menteni. " + errText(e), true); }
+    renderVideos();
+  }
+  async function setVideoHidden(v, hide) {
+    const prev = { hidden: v.hidden, starred: v.starred }; v.hidden = hide; if (hide) v.starred = false; renderVideos();
+    try { await rpc("tr_set_video", { p_video_id: v.video_id, p_hidden: hide }); }
+    catch (e) { Object.assign(v, prev); banner("Nem sikerült menteni. " + errText(e), true); renderVideos(); }
+  }
+
+  // ---------- runs ----------
+  const JOB = { shop: "Termékkeresés", shop_track: "Eladásmérés", videos: "Termékvideók", collect: "Videógyűjtés", track: "Videómérés" };
+  let openRun = null;
+  function renderRuns() {
+    if (!state.runs.length) { $("runs").replaceChildren(el("div", { class: "empty" }, "Még nincs futás.")); return; }
+    const body = [];
+    for (const r of state.runs) {
+      const s = r.stats || {};
+      const mins = r.finished_at ? Math.max(1, Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 60000)) + " perc" : "fut";
+      const st = !r.finished_at ? el("span", { class: "chip gold" }, "fut") : r.ok ? el("span", { class: "chip money" }, "rendben") : el("span", { class: "chip", style: "color:var(--bad)" }, "hiba");
+      let result = "";
+      if (r.job === "shop") result = `${nf(s.seen)} átnézve, ${nf(s.in_range)} a sávban, ${nf(s.product_pages)} termékoldal`;
+      else if (r.job === "shop_track") result = `${nf(s.product_pages)} / ${nf(s.selected)} termék mérve`;
+      else if (r.job === "videos") result = `${nf(s.video_products)} termék, ${nf(s.videos)} videó`;
+      else if (r.job === "collect") result = `${nf(s.seen)} videó átnézve, ${nf(s.ok)} új`;
+      else result = `${nf(s.tracking)} követett, ${nf(s.dropped || 0)} kiesett`;
+      const errs = (s.feed_errors || 0) + (s.failed || 0) + (s.category_errors || 0) + (s.product_page_errors || 0) + (s.video_errors || 0);
+      const feeds = r.job === "shop" ? s.categories : s.feeds;
+      const canOpen = (feeds && Object.keys(feeds).length) || r.error;
+      const open = openRun === r.id;
+      body.push(el("tr", { class: canOpen ? "click" : null, onclick: canOpen ? () => { openRun = open ? null : r.id; renderRuns(); } : null },
+        el("td", {}, (canOpen ? (open ? "▾ " : "▸ ") : "") + (JOB[r.job] || r.job)),
+        el("td", {}, when(r.started_at)), el("td", {}, mins), el("td", {}, st), el("td", {}, result),
+        el("td", { class: "r" }, s.proxy_mb != null ? dec(s.proxy_mb) + " MB" : "–"), el("td", { class: "r" }, nf(errs))));
+      if (open) {
+        const inner = [];
+        if (r.error) inner.push(el("div", { style: "color:var(--bad);margin-bottom:8px" }, r.error));
+        if (feeds) inner.push(el("div", { class: "feedgrid" }, ...Object.entries(feeds).sort((a, b) => (b[1].in_range ?? b[1].new ?? 0) - (a[1].in_range ?? a[1].new ?? 0)).map(([name, f]) =>
+          el("div", { class: f.error ? "err" : "", title: f.error || null }, el("span", {}, r.job === "shop" ? catLabel(name) : name),
+            el("span", {}, f.error && !f.loads ? "hiba" : r.job === "shop" ? `${f.in_range || 0} / ${f.products || 0}` : `${f.new || 0} új / ${f.seen || 0}`)))));
+        body.push(el("tr", { class: "detail" }, el("td", { colspan: 7 }, ...inner)));
+      }
+    }
+    $("runs").replaceChildren(el("table", { class: "rtable" },
+      el("thead", {}, el("tr", {}, ...["Feladat", "Indult", "Időtartam", "Állapot", "Eredmény", "Proxy", "Hibák"].map((h, i) => el("th", { class: i >= 5 ? "r" : null }, h)))),
+      el("tbody", {}, ...body)));
+  }
+  const catLabel = (c) => { const p = state.shop.find(x => c.endsWith("/" + x.category_id) && x.category_name); return p ? p.category_name : c.split("/")[0].replace(/-/g, " ").replace(/^./, m => m.toUpperCase()); };
+
+  // ---------- settings ----------
+  let dirty = false, tags = [], cats = [], brands = [];
+  const NUM = [
+    ["shop_min_price", "Minimum ár ($)", 0, 10000, ""], ["shop_max_price", "Maximum ár ($)", 1, 10000, ""],
+    ["shop_min_revenue_day", "„Nyerő” ennyi napi bevételtől ($)", 0, 1e7, ""],
+    ["shop_fetches_per_category", "Betöltés kategóriánként", 1, 10, "Egy betöltés kb. 20 terméket mutat, mindig kicsit mást."],
+    ["shop_track_min_sold", "Videók és galéria ennyi eladástól", 0, 1e9, "Ennél kevesebb eladásnál nem tölti le a termék videóit és képeit."],
+    ["videos_per_hashtag", "Videó hashtagenként", 10, 1000, "A TikTok kb. 150–190 videó után megáll."], ["trending_count", "Trending videók száma", 0, 1000, ""],
+    ["max_age_days", "Legfeljebb ennyi napos videó", 1, 30, ""], ["min_views", "Legalább ennyi nézés", 0, 1e9, ""],
+    ["min_avg_views_per_hour", "Legalább ennyi nézés óránként", 0, 1e8, ""], ["min_product_price", "Minimum termékár a videóknál ($)", 0, 10000, "0 esetén kikapcsolva."],
+    ["drop_below_views_per_hour", "Kiesik, ha óránként ennél kevesebb nézést kap", 0, 1e8, ""], ["min_snapshots_before_drop", "Legalább ennyi mérés után", 2, 20, ""],
+  ];
+  const BOOL = [["include_trending", "Trending feed is", "A hashtageken kívül a trending feedet is átnézi. Eddig nem adott videót."],
+    ["require_shop_product", "Csak TikTok Shop termékes videók", "Csak az kerül be, amihez TikTok Shop termék van kapcsolva."],
+    ["require_product_signal", "Csak termékre utaló videók", "A szövegben termékre utaló szavak alapján is szűr."]];
+  const numField = (k) => { const d = NUM.find(x => x[0] === k); const v = state.settings[k] ?? DEFAULTS[k] ?? "";
+    return el("div", { class: "field" }, el("label", { for: "s-" + k }, d[1]), el("input", { type: "number", id: "s-" + k, min: d[2], max: d[3], value: v }), d[4] ? el("small", {}, d[4]) : null); };
+  const boolField = (k) => { const d = BOOL.find(x => x[0] === k);
+    return el("label", { class: "toggle" }, el("input", { type: "checkbox", id: "s-" + k, checked: !!state.settings[k] || null }), el("span", { class: "field" }, el("span", { class: "lbl" }, d[1])), el("small", {}, d[2])); };
+  function tagEditor(id, list, label, help, placeholder, parse, display) {
+    const box = el("div", { class: "tags", id: id + "-tags" });
+    const draw = () => box.replaceChildren(...list.map((t, i) => el("span", { class: "tag" }, display(t),
+      el("button", { type: "button", "aria-label": "Törlés", onclick: () => { list.splice(i, 1); draw(); markDirty(); } }, "×"))));
+    draw();
+    const input = el("input", { type: "text", id: id + "-input", placeholder, autocomplete: "off" });
+    const add = () => { let added = false; for (const part of input.value.split(/[,\n]+/).map(x => x.trim()).filter(Boolean)) { const v = parse(part); if (v && !list.includes(v)) { list.push(v); added = true; } } input.value = ""; draw(); if (added) markDirty(); };
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); add(); } });
+    return el("div", { class: "field" }, el("span", { class: "lbl" }, label), box, el("div", { class: "tagadd" }, input, el("button", { type: "button", class: "btn", onclick: add }, "Hozzáadás")), el("small", {}, help));
+  }
+  function markDirty() { dirty = true; const b = document.querySelector(".savebar"); if (b) { b.classList.add("dirty"); b.querySelector("span").textContent = "Nem mentett változásaid vannak."; } }
+  function renderSettings() {
+    const s = state.settings;
+    tags = Array.isArray(s.hashtags) ? s.hashtags.slice() : [];
+    cats = Array.isArray(s.shop_categories) ? s.shop_categories.slice() : [];
+    brands = Array.isArray(s.known_brands) && s.known_brands.length ? s.known_brands.slice() : DEFAULT_BRANDS.slice();
+    const lastShop = state.runs.find(r => r.job === "shop" && r.stats && r.stats.categories);
+    const catStats = lastShop ? lastShop.stats.categories : {};
+    $("settings-form").replaceChildren(
+      el("div", { class: "card wide" }, el("h2", {}, "Termékkeresés"),
+        el("p", {}, "Minden reggel végignézi ezeket a TikTok Shop kategóriákat, és elmenti az ársávba eső termékeket. 6 óránként újraméri az eladásukat."),
+        el("div", { class: "row" }, numField("shop_min_price"), numField("shop_max_price"), numField("shop_min_revenue_day")),
+        el("div", { class: "row" }, numField("shop_fetches_per_category"), numField("shop_track_min_sold")),
+        tagEditor("cats", cats, "Kategóriák", "Zöld szám: hány ársávba eső terméket hozott az utolsó futásnál. Új kategóriát a TikTok Shop kategóriaoldal linkjével adhatsz hozzá.",
+          "pl. shop.tiktok.com/us/c/fitness/835336", (x) => { const m = x.match(/(?:\/c\/)?([a-z0-9-]+)\/(\d{4,})/i); return m ? m[1].toLowerCase() + "/" + m[2] : null; },
+          (c) => [catLabel(c), catStats[c] ? el("em", {}, catStats[c].in_range || 0) : null]),
+        tagEditor("brands", brands, "Ismert márkák", "Ezeknek a termékei „Márkás” jelölést kapnak és kimaradnak a listákból (ha a terméknév ezzel kezdődik, vagy a bolt neve ez).",
+          "pl. VEVOR", (x) => x.slice(0, 40), (b) => b)),
+      el("div", { class: "card" }, el("h2", {}, "Videógyűjtés: hol keressen"), el("p", {}, "Ezeknek a hashtageknek a friss videóit nézi át minden reggel."),
+        tagEditor("tags", tags, "Hashtagek", "Enterrel is hozzáadhatod, # nélkül.", "pl. tiktokshopfinds", (x) => x.toLowerCase().replace(/^#/, "").replace(/[^a-z0-9_]/g, "") || null, (t) => "#" + t),
+        numField("videos_per_hashtag"), boolField("include_trending"), numField("trending_count")),
+      el("div", { class: "card" }, el("h2", {}, "Videógyűjtés: mi kerüljön be"),
+        boolField("require_shop_product"), boolField("require_product_signal"), numField("max_age_days"), numField("min_views"), numField("min_avg_views_per_hour"), numField("min_product_price"),
+        el("h2", {}, "Mikor essen ki"), numField("drop_below_views_per_hour"), numField("min_snapshots_before_drop")),
+      el("div", { class: "savebar" }, el("button", { type: "submit", class: "btn primary", id: "save" }, "Beállítások mentése"), el("span", {}, "A következő futásnál lép életbe.")));
+    dirty = false;
+  }
+  $("settings-form").addEventListener("input", (e) => { if (!/-input$/.test(e.target.id)) markDirty(); });
+  $("settings-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const note = document.querySelector(".savebar span");
+    const vals = {};
+    for (const [k, label, lo, hi] of NUM) {
+      const n = Number($("s-" + k).value);
+      if (!Number.isFinite(n) || !Number.isInteger(n) || n < lo || n > hi) { note.textContent = `Ellenőrizd: „${label}”. ${nf(lo)} és ${nf(hi)} közötti egész szám kell.`; $("s-" + k).focus(); return; }
+      vals[k] = n;
+    }
+    for (const [k] of BOOL) vals[k] = $("s-" + k).checked;
+    if (vals.shop_min_price >= vals.shop_max_price) { note.textContent = "A minimum ár legyen kisebb a maximum árnál."; return; }
+    if (!cats.length) { note.textContent = "Legalább egy kategória kell."; return; }
+    if (!tags.length) { note.textContent = "Legalább egy hashtag kell."; return; }
+    Object.assign(vals, { hashtags: tags.slice(), shop_categories: cats.slice(), known_brands: brands.slice() });
+    $("save").disabled = true; $("save").textContent = "Mentés…";
+    try {
+      await rpc("tr_save_settings", { p_values: vals });
+      state.settings = Object.assign({}, state.settings, vals);
+      dirty = false; document.querySelector(".savebar").classList.remove("dirty");
+      note.textContent = "Mentve. A következő futásnál már ezekkel megy.";
+      brandCache = new WeakMap(); renderKpis(); renderSeg(); renderCats(); renderTable();
+    } catch (err) { note.textContent = errText(err); }
+    finally { $("save").disabled = false; $("save").textContent = "Beállítások mentése"; }
+  });
+
+  boot();
+})();

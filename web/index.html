@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Termékradar</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23101214'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%2334d399' stroke-width='2.5'/%3E%3Ccircle cx='21' cy='12' r='3' fill='%23ff6a3d'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<!-- sign in -->
+<section id="login" class="login" hidden>
+  <div class="login-card">
+    <div class="logo-row"><span class="logo-mark" aria-hidden="true"></span><b>Termékradar</b></div>
+    <h1>Belépés</h1>
+    <p>Add meg az e-mail címed, és küldünk egy belépő linket. Jelszó nem kell.</p>
+    <form id="login-form">
+      <label for="login-email">E-mail cím</label>
+      <input id="login-email" type="email" autocomplete="email" required placeholder="te@pelda.hu">
+      <button class="btn primary wide" type="submit" id="login-btn">Belépő link küldése</button>
+    </form>
+    <p class="login-note" id="login-note" role="status"></p>
+  </div>
+</section>
+
+<!-- app -->
+<div id="app" class="app" hidden>
+  <aside class="side" aria-label="Fő menü">
+    <div class="logo-row"><span class="logo-mark" aria-hidden="true"></span><b>Termékradar</b></div>
+    <nav class="side-nav">
+      <button type="button" data-view="products" class="nav-item" aria-current="page">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7l8-4 8 4v10l-8 4-8-4z M4 7l8 4 8-4 M12 11v10"/></svg>Termékek</button>
+      <button type="button" data-view="videos" class="nav-item">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="13" height="14" rx="2"/><path d="M16 10l5-3v10l-5-3"/></svg>Videók</button>
+      <button type="button" data-view="runs" class="nav-item">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4l3-7 4 14 3-7h2"/></svg>Futások</button>
+      <button type="button" data-view="settings" class="nav-item">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg>Beállítások</button>
+    </nav>
+    <div class="side-status" id="side-status"></div>
+    <div class="side-user">
+      <span id="user-email"></span>
+      <button type="button" class="link-btn" id="logout">Kilépés</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div id="banner" class="banner" hidden></div>
+
+    <!-- PRODUCTS -->
+    <section id="view-products" class="view">
+      <header class="page-head">
+        <div>
+          <h1>Termékek</h1>
+          <p class="sub" id="products-sub">TikTok Shop termékek a beállított ársávban, napi eladás és bevétel szerint.</p>
+        </div>
+        <button type="button" class="btn" id="refresh">Frissítés</button>
+      </header>
+
+      <div class="kpis" id="kpis"></div>
+
+      <div class="toolbar">
+        <div class="tabs" id="seg" role="tablist" aria-label="Szűrők"></div>
+        <div class="tools">
+          <label class="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+            <input id="q" type="search" placeholder="Keresés termékre, boltra" aria-label="Keresés"></label>
+          <select id="cat" aria-label="Kategória"><option value="">Minden kategória</option></select>
+          <div class="range" aria-label="Ár">
+            <input id="pmin" type="number" min="0" step="1" placeholder="Ár min" aria-label="Minimum ár">
+            <span>–</span>
+            <input id="pmax" type="number" min="0" step="1" placeholder="max" aria-label="Maximum ár">
+          </div>
+          <select id="sort" aria-label="Rendezés">
+            <option value="revenue_per_day">Napi bevétel</option>
+            <option value="sold_per_day">Napi eladás</option>
+            <option value="growth_pct">Növekedés %</option>
+            <option value="trend">Gyorsulás</option>
+            <option value="sold_per_day_recent">Mostani tempó</option>
+            <option value="sold_now">Összes eladás</option>
+            <option value="video_views">Videók nézettsége</option>
+            <option value="price">Ár</option>
+            <option value="rating">Értékelés</option>
+            <option value="first_seen">Legújabb</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="table-card">
+        <div class="table-scroll">
+          <table class="ptable" id="ptable">
+            <thead><tr>
+              <th class="c-star" aria-label="Csillag"></th>
+              <th class="c-prod">Termék</th>
+              <th class="r sortable" data-sort="price">Ár</th>
+              <th class="r sortable" data-sort="sold_per_day">Napi eladás</th>
+              <th class="r sortable" data-sort="revenue_per_day">Napi bevétel</th>
+              <th class="r sortable" data-sort="growth_pct" title="A napi eladás az eddig eladott darabok hány százaléka">Növekedés</th>
+              <th class="r sortable" data-sort="sold_now">Összes eladás</th>
+              <th class="r sortable" data-sort="video_views">Videók</th>
+              <th class="r sortable" data-sort="rating">Értékelés</th>
+            </tr></thead>
+            <tbody id="prows"><tr><td colspan="9" class="empty">Betöltés…</td></tr></tbody>
+          </table>
+        </div>
+        <div class="pager" id="pager"></div>
+      </div>
+    </section>
+
+    <!-- VIDEOS -->
+    <section id="view-videos" class="view" hidden>
+      <header class="page-head">
+        <div>
+          <h1>Videók</h1>
+          <p class="sub">Friss, gyorsan növő TikTok videók TikTok Shop termékkel. 6 óránként mérve.</p>
+        </div>
+      </header>
+      <div class="toolbar">
+        <div class="tabs" id="vseg" role="tablist" aria-label="Videó szűrők"></div>
+        <div class="tools">
+          <label class="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+            <input id="vq" type="search" placeholder="Keresés termékre, creatorra" aria-label="Keresés a videók között"></label>
+          <select id="vsort" aria-label="Rendezés">
+            <option value="recent_views_per_hour">Nézés/óra most</option>
+            <option value="acceleration">Gyorsulás</option>
+            <option value="product_sold_per_day">Termék eladás/nap</option>
+            <option value="views">Összes nézés</option>
+            <option value="newest">Legújabb</option>
+          </select>
+        </div>
+      </div>
+      <div class="table-card">
+        <div class="table-scroll">
+          <table class="ptable">
+            <thead><tr>
+              <th class="c-star"></th><th class="c-prod">Videó és termék</th>
+              <th class="r">Nézés/óra</th><th class="r">Gyorsulás</th><th class="r">Nézés</th>
+              <th class="r">Ár</th><th class="r">Eladva</th><th class="r">Kor</th>
+            </tr></thead>
+            <tbody id="vrows"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- RUNS -->
+    <section id="view-runs" class="view" hidden>
+      <header class="page-head"><div><h1>Futások</h1><p class="sub">Az automatikus gyűjtések és mérések naplója. Kattints egy sorra a részletekért.</p></div></header>
+      <div class="table-card"><div class="table-scroll" id="runs"></div></div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section id="view-settings" class="view" hidden>
+      <header class="page-head"><div><h1>Beállítások</h1><p class="sub">A következő futásnál lépnek életbe.</p></div></header>
+      <form id="settings-form" class="settings" novalidate></form>
+    </section>
+  </main>
+</div>
+
+<!-- product drawer -->
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" aria-label="Termék részletei" hidden></aside>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
