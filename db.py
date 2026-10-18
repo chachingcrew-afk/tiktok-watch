@@ -173,9 +173,10 @@ def upsert_shop_product(conn, p: dict) -> None:
             """
             insert into tiktok_watch.shop_products
               (product_id, title, url, image, category_id, category_name, shop_name, seller_id,
-               price, price_original, rating, reviews, last_sold, first_seen, last_seen, last_checked)
-            values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now(), now(), now())
+               price, price_original, rating, reviews, last_sold, focus, first_seen, last_seen, last_checked)
+            values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now(), now(), now())
             on conflict (product_id) do update set
+              focus = coalesce(excluded.focus, tiktok_watch.shop_products.focus),
               title = coalesce(excluded.title, tiktok_watch.shop_products.title),
               url = coalesce(excluded.url, tiktok_watch.shop_products.url),
               image = coalesce(excluded.image, tiktok_watch.shop_products.image),
@@ -189,7 +190,7 @@ def upsert_shop_product(conn, p: dict) -> None:
             """,
             (p["product_id"], p.get("title"), p.get("url"), p.get("image"), p.get("category_id"),
              p.get("category_name"), p.get("shop_name"), p.get("seller_id"), p.get("price"),
-             p.get("price_original"), p.get("rating"), p.get("reviews"), p.get("sold")),
+             p.get("price_original"), p.get("rating"), p.get("reviews"), p.get("sold"), p.get("focus")),
         )
 
 
@@ -217,17 +218,17 @@ def shop_products_to_refresh(conn, min_sold: int) -> list[tuple[str, str]]:
         return cur.fetchall()
 
 
-def shop_products_6h(conn, min_price: float, max_price: float, limit: int) -> list[tuple[str, str]]:
+def shop_products_6h(conn, min_price: float, max_price: float, limit: int, fmin: float = 0, fmax: float = 0) -> list[tuple[str, str]]:
     """Products worth a 6-hourly sales check: starred ones first, then the fastest sellers in the price band."""
     with conn.cursor() as cur:
         cur.execute(
             "select p.product_id, p.url from tiktok_watch.shop_products p"
             " left join tiktok_watch.shop_product_scores v using (product_id)"
             " where not p.hidden and p.url is not null and p.last_seen > now() - interval '14 days'"
-            "   and (p.starred or p.price between %s and %s or p.price is null)"
+            "   and (p.starred or p.price between %s and %s or p.price is null or (p.focus = 'women' and p.price between %s and %s))"
             "   and (p.page_checked_at is null or p.page_checked_at < now() - interval '5 hours')"
             " order by p.starred desc, v.sold_per_day desc nulls last, p.last_sold desc nulls last limit %s",
-            (min_price, max_price, limit),
+            (min_price, max_price, fmin, fmax, limit),
         )
         return cur.fetchall()
 

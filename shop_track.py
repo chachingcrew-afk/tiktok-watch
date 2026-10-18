@@ -29,7 +29,7 @@ async def main() -> None:
     run_id = db.start_run(conn, "shop_track")
     _, proxies = proxy_settings(os.environ.get("PROXY_URL"))
     try:
-        todo = db.shop_products_6h(conn, cfg.shop_min_price, cfg.shop_max_price, LIMIT)
+        todo = db.shop_products_6h(conn, cfg.shop_min_price, cfg.shop_max_price, LIMIT, cfg.fashion_min_price, cfg.fashion_max_price)
         shop.STATS["selected"] = len(todo)
         await shop.read_pages(conn, proxies, todo)
     except BaseException as e:

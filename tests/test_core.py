@@ -266,3 +266,14 @@ def test_product_videos_parse_and_body():
     v = parse_videos(payload)
     assert v[0]["play_count"] == 6379904 and v[0]["like_count"] == 364674 and v[0]["author_name"] == "ADHDee"
     assert v[0]["upload_time"].year == 2023 and v[0]["rank"] == 0
+
+
+def test_brand_of():
+    from core import brand_of
+    b = ["Halara", "SKIMS", "Dash", "Levi's"]
+    assert brand_of("Halara High Waisted Leggings", "Some Shop", b) == "Halara"
+    assert brand_of("【Hot】SKIMS Fits Everybody Bra", None, b) == "SKIMS"
+    assert brand_of("Women's Flowy Maxi Dress", "halara official", b) == "Halara"
+    assert brand_of("Dash Cam 4K", "Cams US", b) is None
+    assert brand_of("Leggings for women, like halara", "x", b) is None
+    assert brand_of("Levi's 501 Jeans", "x", b) == "Levi's"

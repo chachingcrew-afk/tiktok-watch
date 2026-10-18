@@ -56,6 +56,14 @@ class Config:
     shop_fetches_per_category: int = _env_int("SHOP_FETCHES_PER_CATEGORY", 3)
     shop_track_min_sold: int = _env_int("SHOP_TRACK_MIN_SOLD", 100)
 
+    # Women's clothing: scanned harder (more loads per category), with its own price band;
+    # products of known brands are not kept.
+    fashion_categories: list[str] = field(default_factory=list)
+    fashion_min_price: int = _env_int("FASHION_MIN_PRICE", 20)
+    fashion_max_price: int = _env_int("FASHION_MAX_PRICE", 70)
+    fashion_fetches_per_category: int = _env_int("FASHION_FETCHES_PER_CATEGORY", 10)
+    known_brands: list[str] = field(default_factory=list)
+
     # Keys the dashboard may change, with their expected type
     EDITABLE = {
         "hashtags": list, "videos_per_hashtag": int, "include_trending": bool, "trending_count": int,
@@ -64,6 +72,8 @@ class Config:
         "product_check_hours": int, "min_product_price": int,
         "shop_categories": "categories", "shop_min_price": int, "shop_max_price": int,
         "shop_fetches_per_category": int, "shop_track_min_sold": int,
+        "fashion_categories": "categories", "fashion_min_price": int, "fashion_max_price": int,
+        "fashion_fetches_per_category": int, "known_brands": "names",
     }
 
     def apply_overrides(self, values: dict) -> list[str]:
@@ -82,6 +92,11 @@ class Config:
                 if not cats:
                     continue
                 setattr(self, key, cats)
+            elif kind == "names" and isinstance(value, list):
+                names = [str(x).strip()[:60] for x in value if str(x).strip()]
+                if not names:
+                    continue
+                setattr(self, key, names)
             elif kind is list and isinstance(value, list):
                 tags = [re.sub(r"[^a-z0-9_]", "", str(t).lower().lstrip("#")) for t in value]
                 tags = [t for t in tags if t]
@@ -261,3 +276,27 @@ def proxy_settings(proxy_url: str | None) -> tuple[dict | None, dict | None]:
         pw["username"] = p.username
         pw["password"] = p.password or ""
     return pw, {"http": proxy_url, "https": proxy_url}
+
+
+# Names that are only brands when the shop itself carries them ("Dash cam", "Bear plush" are not brands).
+BRAND_AMBIGUOUS = {"Dash", "Bear", "Snow", "Instant", "Ring", "Bella", "PINK", "Alo", "Express", "Garage", "Target", "Coach", "Guess"}
+
+
+def _norm(x: str | None) -> str:
+    return re.sub(r"[^a-z0-9]", "", (x or "").lower())
+
+
+def brand_of(title: str | None, shop_name: str | None, brands: list[str]) -> str | None:
+    """The known brand a product belongs to: its title starts with the brand, or the shop is named
+    after it ("Halara", "Halara Official", "halara.us"). Same rule as the website."""
+    t = re.sub(r"^(\s|【[^】]*】|\[[^\]]*\]|\([^)]*\))+", "", title or "")
+    shop = _norm(shop_name)
+    for b in brands:
+        nb = _norm(b)
+        if not nb:
+            continue
+        if shop and shop in {nb, nb + "official", nb + "officialstore", nb + "store", nb + "us", nb + "usa", nb + "direct", nb + "shop"}:
+            return b
+        if b not in BRAND_AMBIGUOUS and re.match(re.escape(b) + r"(?![a-z0-9])", t, re.I):
+            return b
+    return None

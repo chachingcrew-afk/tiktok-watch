@@ -25,7 +25,7 @@ import db
 import netstats
 import gallery
 import twins
-from core import Config, proxy_settings
+from core import Config, brand_of, proxy_settings
 from fetch_product import _unescape, fetch_product
 from fetch_video import HEADERS
 from session import setup_logging
@@ -123,9 +123,19 @@ def in_range(p: dict, cfg) -> bool:
     return p["price"] is not None and cfg.shop_min_price <= p["price"] <= cfg.shop_max_price
 
 
+def groups(cfg) -> list[dict]:
+    """Category groups to scan: the general product categories, and women's clothing (more loads,
+    own price band, known brands left out)."""
+    g = [{"focus": None, "cats": cfg.shop_categories, "loads": cfg.shop_fetches_per_category,
+          "lo": cfg.shop_min_price, "hi": cfg.shop_max_price, "skip_brands": False}]
+    if cfg.fashion_categories:
+        g.append({"focus": "women", "cats": cfg.fashion_categories, "loads": cfg.fashion_fetches_per_category,
+                  "lo": cfg.fashion_min_price, "hi": cfg.fashion_max_price, "skip_brands": True})
+    return g
+
+
 async def scan_categories(cfg, conn, proxies) -> set[str]:
     gate = asyncio.Semaphore(CONCURRENCY)
-    jobs = [(c, n) for c in cfg.shop_categories for n in range(cfg.shop_fetches_per_category)]
 
     async def one(cat, n):
         async with gate:
@@ -136,35 +146,46 @@ async def scan_categories(cfg, conn, proxies) -> set[str]:
             except Exception as e:
                 return cat, e
 
-    found: dict[str, dict] = {}
-    for cat, res in await asyncio.gather(*(one(c, n) for c, n in jobs)):
-        info = CATS.setdefault(cat, {"loads": 0, "products": 0, "in_range": 0})
-        if isinstance(res, Exception):
-            info["error"] = (type(res).__name__ + ": " + str(res))[:200]
-            STATS["category_errors"] += 1
-            continue
-        info["loads"] += 1
-        name = category_name(res) or cat.split("/")[0].replace("-", " ").title()
-        for p in parse_category_page(res):
-            info["products"] += 1
-            if p["product_id"] in found:
+    kept: set[str] = set()
+    brands = cfg.known_brands
+    for g in groups(cfg):
+        jobs = [(c, n) for c in g["cats"] for n in range(g["loads"])]
+        found: dict[str, dict] = {}
+        for cat, res in await asyncio.gather(*(one(c, n) for c, n in jobs)):
+            info = CATS.setdefault(cat, {"loads": 0, "products": 0, "in_range": 0})
+            if isinstance(res, Exception):
+                info["error"] = (type(res).__name__ + ": " + str(res))[:200]
+                STATS["category_errors"] += 1
                 continue
-            p["category_id"], p["category_name"] = cat.split("/")[-1], name
-            found[p["product_id"]] = p
-    for p in found.values():
-        STATS["seen"] += 1
-        if not in_range(p, cfg):
-            STATS["out_of_range"] += 1
-            continue
-        db.upsert_shop_product(conn, p)
-        if p["sold"] is not None:
-            db.add_product_snapshot(conn, p["product_id"], p["sold"], p["price"], p["price"], "listing")
-        STATS["in_range"] += 1
-    for cat in cfg.shop_categories:
-        if cat in CATS:
-            CATS[cat]["in_range"] = sum(1 for p in found.values() if p.get("category_id") == cat.split("/")[-1] and in_range(p, cfg))
-    conn.commit()
-    return {pid for pid, p in found.items() if in_range(p, cfg)}
+            info["loads"] += 1
+            name = category_name(res) or cat.split("/")[0].replace("-", " ").title()
+            for p in parse_category_page(res):
+                info["products"] += 1
+                if p["product_id"] in found:
+                    continue
+                p["category_id"], p["category_name"] = cat.split("/")[-1], name
+                found[p["product_id"]] = p
+        ok = lambda p: p["price"] is not None and g["lo"] <= p["price"] <= g["hi"]  # noqa: E731
+        prefix = "women_" if g["focus"] else ""
+        for p in found.values():
+            STATS[prefix + "seen"] += 1
+            if not ok(p):
+                STATS[prefix + "out_of_range"] += 1
+                continue
+            if g["skip_brands"] and brand_of(p.get("title"), p.get("shop_name"), brands):
+                STATS[prefix + "brand_skipped"] += 1
+                continue
+            p["focus"] = g["focus"]
+            db.upsert_shop_product(conn, p)
+            if p["sold"] is not None:
+                db.add_product_snapshot(conn, p["product_id"], p["sold"], p["price"], p["price"], "listing")
+            STATS[prefix + "in_range"] += 1
+            kept.add(p["product_id"])
+        for cat in g["cats"]:
+            if cat in CATS:
+                CATS[cat]["in_range"] = sum(1 for p in found.values() if p.get("category_id") == cat.split("/")[-1] and ok(p))
+        conn.commit()
+    return kept
 
 
 async def refresh_missing(cfg, conn, proxies, seen_today: set[str]) -> None:
@@ -237,7 +258,7 @@ async def main() -> None:
         db.finish_run(conn, run_id, False, {**STATS, **netstats.summary(), "categories": CATS}, str(e))
         raise
     log.info("Done. %s", dict(STATS))
-    ok = STATS["seen"] > 0
+    ok = STATS["seen"] + STATS["women_seen"] > 0
     db.finish_run(conn, run_id, ok, {**STATS, **netstats.summary(), "categories": CATS}, None if ok else "no products found in any category")
     conn.close()
     if not ok:

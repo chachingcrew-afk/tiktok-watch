@@ -146,7 +146,7 @@
 
   // ---------- state ----------
   let state = { shop: [], videos: [], history: {}, runs: [], settings: {} };
-  const P = { seg: store.get("seg") || "all", sort: store.get("sort") || "revenue_per_day", q: "", cat: "", pmin: null, pmax: null, page: 0, sel: null };
+  const P = { focus: null, seg: store.get("seg") || "all", sort: store.get("sort") || "revenue_per_day", q: "", cat: "", pmin: null, pmax: null, page: 0, sel: null };
   const V = { seg: "tracking", sort: "recent_views_per_hour", q: "" };
   const PAGE = 50;
   const cache = { thumbs: {}, gallery: {}, videos: {}, hist: {} };
@@ -183,11 +183,15 @@
 
   // ---------- navigation ----------
   function selectView(v) {
-    if (!["products", "videos", "runs", "settings"].includes(v)) v = "products";
+    if (!["products", "women", "videos", "runs", "settings"].includes(v)) v = "products";
+    const focus = v === "women" ? "women" : null;
+    if (focus !== P.focus) { P.focus = focus; P.page = 0; P.cat = ""; if (state.shop.length) { renderKpis(); renderSeg(); renderCats(); renderTable(); } }
+    $("products-title").textContent = focus ? "Női ruha" : "Termékek";
+    $("products-sub").textContent = focus ? `Női ruházat a TikTok Shopról, $${fsetting("fashion_min_price")}–${fsetting("fashion_max_price")} között, ismert márkák nélkül. Naponta bővül.` : "TikTok Shop termékek a beállított ársávban, napi eladás és bevétel szerint.";
     for (const b of document.querySelectorAll(".nav-item")) {
       if (b.dataset.view === v) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
     }
-    for (const s of ["products", "videos", "runs", "settings"]) $("view-" + s).hidden = s !== v;
+    for (const s of ["products", "videos", "runs", "settings"]) $("view-" + s).hidden = s !== (v === "women" ? "products" : v);
     store.set("view", v);
   }
   for (const b of document.querySelectorAll(".nav-item")) b.addEventListener("click", () => selectView(b.dataset.view));
@@ -217,10 +221,10 @@
     brand: () => "Ismert márkák saját termékei, ezek nem dropshippelhetők. A többi listából kimaradnak.",
     new: () => "Az elmúlt 30 órában felfedezett termékek",
   };
-  const DEFAULTS = { hot_video_days: 60, shop_min_price: 30, shop_max_price: 70, shop_min_revenue_day: 1000, shop_fetches_per_category: 3, shop_track_min_sold: 100 };
+  const DEFAULTS = { fashion_min_price: 20, fashion_max_price: 70, fashion_fetches_per_category: 10, hot_video_days: 60, shop_min_price: 30, shop_max_price: 70, shop_min_revenue_day: 1000, shop_fetches_per_category: 3, shop_track_min_sold: 100 };
   const setting = (k) => { const v = state.settings[k]; return v != null ? Number(v) : DEFAULTS[k]; };
   const DEFAULT_BRANDS = ["VEVOR","Merach","Anker","Soundcore","eufy","Ninja","Shark","SharkNinja","Dyson","Bissell","Hoover","iRobot","Roborock","Tineco","Keurig","Cuisinart","KitchenAid","Hamilton Beach","Instant Pot","Instant","COSORI","Chefman","BLACK+DECKER","DEWALT","Milwaukee","Makita","Ryobi","Bosch","Philips","Braun","Oral-B","Waterpik","Conair","Revlon","Remington","Wahl","Andis","BaBylissPRO","Laifen","Panasonic","Samsung","Apple","JBL","Sony","Bose","Beats","Logitech","Garmin","Fitbit","Coleman","YETI","Stanley","Hydro Flask","Owala","Lodge","OXO","Rubbermaid","Sunbeam","Igloo","Theragun","Therabody","Hyperice","RENPHO","Bowflex","Gorilla Grip","Amazon Basics","LEGO","Hasbro","Mattel","Nerf","Fisher-Price","Crayola","Furbo","PetSafe","Cricut","BlendJet","Medicube","Govee","TP-Link","Ring","Blink","Wyze","Ecovacs","Dreame","Xiaomi","Ugreen","Baseus","Belkin","OtterBox","Spigen","Casetify","Shokz","Soundpeats","Sterilite","Mueller","Gourmia","Bella","Dash","Bear","AquaSonic","Snow","Crest","Sol de Janeiro","CeraVe","Olaplex","T3","GHD"];
-  const BRAND_AMBIGUOUS = new Set(["Dash", "Bear", "Snow", "Instant", "Ring", "Bella"]);
+  const BRAND_AMBIGUOUS = new Set(["Dash", "Bear", "Snow", "Instant", "Ring", "Bella", "PINK", "Alo", "Express", "Garage", "Target", "Coach", "Guess"]);
   let brandCache = new WeakMap();
   const brandList = () => Array.isArray(state.settings.known_brands) && state.settings.known_brands.length ? state.settings.known_brands : DEFAULT_BRANDS;
   const normShop = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -232,22 +236,27 @@
     for (const b of brandList()) {
       const nb = normShop(b);
       if (!nb) continue;
-      const shopHit = !!shop && [nb, nb + "official", nb + "officialstore", nb + "store", nb + "us", nb + "usa", nb + "direct"].includes(shop);
+      const shopHit = !!shop && [nb, nb + "official", nb + "officialstore", nb + "store", nb + "us", nb + "usa", nb + "direct", nb + "shop"].includes(shop);
       const titleHit = !BRAND_AMBIGUOUS.has(b) && new RegExp("^" + reEsc(b) + "(?![a-z0-9])", "i").test(title);
       if (shopHit || titleHit) { hit = b; break; }
     }
     brandCache.set(p, hit);
     return hit;
   }
-  const priceMin = () => P.pmin != null ? P.pmin : setting("shop_min_price");
-  const priceMax = () => P.pmax != null ? P.pmax : setting("shop_max_price");
-  const inBand = (p) => p.price != null && Number(p.price) >= priceMin() && Number(p.price) <= priceMax();
+  const fsetting = (k) => setting(k);
+  const isWomen = (p) => p.focus === "women";
+  const bandOf = (women) => women ? [setting("fashion_min_price"), setting("fashion_max_price")] : [setting("shop_min_price"), setting("shop_max_price")];
+  const priceMin = (p) => P.pmin != null ? P.pmin : bandOf(p ? isWomen(p) : !!P.focus)[0];
+  const priceMax = (p) => P.pmax != null ? P.pmax : bandOf(p ? isWomen(p) : !!P.focus)[1];
+  const inBand = (p) => p.price != null && Number(p.price) >= priceMin(p) && Number(p.price) <= priceMax(p);
+  const inView = (p) => !P.focus || p.focus === P.focus;
   const isWin = (p) => Number(p.revenue_per_day) >= setting("shop_min_revenue_day");
   const isGrowing = (p) => Number(p.sold_per_day) > 0 && (Number(p.trend) >= 1 || Number(p.sold_per_day_recent) >= Number(p.sold_per_day) || Number(p.growth_pct) >= 2);
   const isHot = (p) => Number(p.fresh_videos) > 0 && isGrowing(p);
   const isNew = (p) => p.first_seen && Date.now() - new Date(p.first_seen).getTime() < 30 * 36e5;
   function segFilter(seg) {
     return (p) => {
+      if (!inView(p)) return false;
       if (seg === "hidden") return p.hidden;
       if (p.hidden) return false;
       if (seg === "starred") return p.starred;
@@ -277,12 +286,12 @@
 
   // ---------- products: render ----------
   function renderKpis() {
-    const live = state.shop.filter(p => !p.hidden && inBand(p) && !brandOf(p));
+    const live = state.shop.filter(p => inView(p) && !p.hidden && inBand(p) && !brandOf(p));
     const measured = live.filter(p => p.sold_per_day != null);
     const best = live.reduce((m, p) => Number(p.revenue_per_day) > (m ? Number(m.revenue_per_day) : -1) ? p : m, null);
     const totalRev = measured.reduce((s, p) => s + (Number(p.revenue_per_day) || 0), 0);
     const cards = [
-      ["", "Termék a sávban", nf(live.length), `$${priceMin()}–${priceMax()}, márkák nélkül`],
+      ["", P.focus ? "Női ruha a sávban" : "Termék a sávban", nf(live.length), `$${priceMin()}–${priceMax()}, márkák nélkül`],
       ["money", "Nyerő termék", nf(live.filter(isWin).length), `legalább $${nf(setting("shop_min_revenue_day"))}/nap`],
       ["money", "Legjobb napi bevétel", best && best.revenue_per_day != null ? money(best.revenue_per_day) : "–", best ? String(best.title || "").slice(0, 38) : "még nincs mérés"],
       ["heat", "Aktuális nyerő", nf(live.filter(isHot).length), `nő az eladás + max. ${setting("hot_video_days")} napos videó`],
@@ -297,11 +306,11 @@
   }
   function renderCats() {
     const counts = new Map();
-    for (const p of state.shop) if (!p.hidden && p.category_id) counts.set(p.category_id, { name: p.category_name || p.category_id, n: (counts.get(p.category_id)?.n || 0) + 1 });
+    for (const p of state.shop) if (inView(p) && !p.hidden && p.category_id) counts.set(p.category_id, { name: p.category_name || p.category_id, n: (counts.get(p.category_id)?.n || 0) + 1 });
     const opts = [...counts.entries()].sort((a, b) => a[1].name.localeCompare(b[1].name, "hu"));
     $("cat").replaceChildren(el("option", { value: "" }, "Minden kategória"), ...opts.map(([id, c]) => el("option", { value: id }, `${c.name} (${c.n})`)));
     $("cat").value = P.cat;
-    $("pmin").placeholder = "Ár min " + setting("shop_min_price"); $("pmax").placeholder = "max " + setting("shop_max_price");
+    $("pmin").placeholder = "Ár min " + priceMin(); $("pmax").placeholder = "max " + priceMax();
     $("sort").value = P.sort;
   }
   function img(p, size) {
@@ -643,7 +652,7 @@
       const mins = r.finished_at ? Math.max(1, Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 60000)) + " perc" : "fut";
       const st = !r.finished_at ? el("span", { class: "chip gold" }, "fut") : r.ok ? el("span", { class: "chip money" }, "rendben") : el("span", { class: "chip", style: "color:var(--bad)" }, "hiba");
       let result = "";
-      if (r.job === "shop") result = `${nf(s.seen)} átnézve, ${nf(s.in_range)} a sávban, ${nf(s.product_pages)} termékoldal`;
+      if (r.job === "shop") result = `${nf(s.seen)} átnézve, ${nf(s.in_range)} a sávban` + (s.women_seen ? `, női ruha: ${nf(s.women_in_range)} / ${nf(s.women_seen)} (${nf(s.women_brand_skipped || 0)} márkás kihagyva)` : "") + `, ${nf(s.product_pages)} termékoldal`;
       else if (r.job === "shop_track") result = `${nf(s.product_pages)} / ${nf(s.selected)} termék mérve`;
       else if (r.job === "videos") result = `${nf(s.video_products)} termék, ${nf(s.videos)} videó`;
       else if (r.job === "collect") result = `${nf(s.seen)} videó átnézve, ${nf(s.ok)} új`;
@@ -672,11 +681,13 @@
   const catLabel = (c) => { const p = state.shop.find(x => c.endsWith("/" + x.category_id) && x.category_name); return p ? p.category_name : c.split("/")[0].replace(/-/g, " ").replace(/^./, m => m.toUpperCase()); };
 
   // ---------- settings ----------
-  let dirty = false, tags = [], cats = [], brands = [];
+  let dirty = false, tags = [], cats = [], fcats = [], brands = [];
   const NUM = [
     ["shop_min_price", "Minimum ár ($)", 0, 10000, ""], ["shop_max_price", "Maximum ár ($)", 1, 10000, ""],
     ["shop_min_revenue_day", "„Nyerő” ennyi napi bevételtől ($)", 0, 1e7, ""],
     ["shop_fetches_per_category", "Betöltés kategóriánként", 1, 10, "Egy betöltés kb. 20 terméket mutat, mindig kicsit mást."],
+    ["fashion_min_price", "Női ruha minimum ár ($)", 0, 10000, ""], ["fashion_max_price", "Női ruha maximum ár ($)", 1, 10000, ""],
+    ["fashion_fetches_per_category", "Betöltés kategóriánként (női ruha)", 1, 30, "Több betöltés több terméket hoz, de tovább tart a futás."],
     ["hot_video_days", "„Aktuális nyerő”: videó legfeljebb ennyi napos", 7, 365, "Ennél frissebb videó kell ahhoz, hogy egy termék aktuális nyerő legyen."],
     ["shop_track_min_sold", "Videók és galéria ennyi eladástól", 0, 1e9, "Ennél kevesebb eladásnál nem tölti le a termék videóit és képeit."],
     ["videos_per_hashtag", "Videó hashtagenként", 10, 1000, "A TikTok kb. 150–190 videó után megáll."], ["trending_count", "Trending videók száma", 0, 1000, ""],
@@ -706,6 +717,7 @@
     const s = state.settings;
     tags = Array.isArray(s.hashtags) ? s.hashtags.slice() : [];
     cats = Array.isArray(s.shop_categories) ? s.shop_categories.slice() : [];
+    fcats = Array.isArray(s.fashion_categories) ? s.fashion_categories.slice() : [];
     brands = Array.isArray(s.known_brands) && s.known_brands.length ? s.known_brands.slice() : DEFAULT_BRANDS.slice();
     const lastShop = state.runs.find(r => r.job === "shop" && r.stats && r.stats.categories);
     const catStats = lastShop ? lastShop.stats.categories : {};
@@ -719,6 +731,12 @@
           (c) => [catLabel(c), catStats[c] ? el("em", {}, catStats[c].in_range || 0) : null]),
         tagEditor("brands", brands, "Ismert márkák", "Ezeknek a termékei „Márkás” jelölést kapnak és kimaradnak a listákból (ha a terméknév ezzel kezdődik, vagy a bolt neve ez).",
           "pl. VEVOR", (x) => x.slice(0, 40), (b) => b)),
+      el("div", { class: "card wide" }, el("h2", {}, "Női ruha"),
+        el("p", {}, "Ezeket a női ruházati kategóriákat külön, alaposabban nézi át minden reggel. Ismert márkák termékeit nem menti el."),
+        el("div", { class: "row" }, numField("fashion_min_price"), numField("fashion_max_price"), numField("fashion_fetches_per_category")),
+        tagEditor("fcats", fcats, "Női ruha kategóriák", "Zöld szám: hány ársávba eső terméket hozott az utolsó futásnál.",
+          "pl. shop.tiktok.com/us/c/women-s-dresses/842504", (x) => { const m = x.match(/(?:\/c\/)?([a-z0-9-]+)\/(\d{4,})/i); return m ? m[1].toLowerCase() + "/" + m[2] : null; },
+          (c) => [catLabel(c), catStats[c] ? el("em", {}, catStats[c].in_range || 0) : null])),
       el("div", { class: "card" }, el("h2", {}, "Videógyűjtés: hol keressen"), el("p", {}, "Ezeknek a hashtageknek a friss videóit nézi át minden reggel."),
         tagEditor("tags", tags, "Hashtagek", "Enterrel is hozzáadhatod, # nélkül.", "pl. tiktokshopfinds", (x) => x.toLowerCase().replace(/^#/, "").replace(/[^a-z0-9_]/g, "") || null, (t) => "#" + t),
         numField("videos_per_hashtag"), boolField("include_trending"), numField("trending_count")),
@@ -739,10 +757,10 @@
       vals[k] = n;
     }
     for (const [k] of BOOL) vals[k] = $("s-" + k).checked;
-    if (vals.shop_min_price >= vals.shop_max_price) { note.textContent = "A minimum ár legyen kisebb a maximum árnál."; return; }
+    if (vals.shop_min_price >= vals.shop_max_price || vals.fashion_min_price >= vals.fashion_max_price) { note.textContent = "A minimum ár legyen kisebb a maximum árnál."; return; }
     if (!cats.length) { note.textContent = "Legalább egy kategória kell."; return; }
     if (!tags.length) { note.textContent = "Legalább egy hashtag kell."; return; }
-    Object.assign(vals, { hashtags: tags.slice(), shop_categories: cats.slice(), known_brands: brands.slice() });
+    Object.assign(vals, { hashtags: tags.slice(), shop_categories: cats.slice(), fashion_categories: fcats.slice(), known_brands: brands.slice() });
     $("save").disabled = true; $("save").textContent = "Mentés…";
     try {
       await rpc("tr_save_settings", { p_values: vals });
