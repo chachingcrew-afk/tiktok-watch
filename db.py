@@ -371,19 +371,21 @@ def link_feed_video(conn, v: ParsedVideo) -> None:
     if not pid:
         return
     cat = (p.get("category") or "").split(" › ")[-1] or None
+    focus = "women" if (p.get("category") or "").startswith("Womenswear") else None
     with conn.cursor() as cur:
         cur.execute(
             """
-            insert into tiktok_watch.shop_products (product_id, title, url, image, category_name, seller_id, price, first_seen, last_seen)
-            values (%s,%s,%s,%s,%s,%s,%s, now(), now())
+            insert into tiktok_watch.shop_products (product_id, title, url, image, category_name, seller_id, price, focus, first_seen, last_seen)
+            values (%s,%s,%s,%s,%s,%s,%s,%s, now(), now())
             on conflict (product_id) do update set last_seen = now(),
+              focus = coalesce(tiktok_watch.shop_products.focus, excluded.focus),
               title = coalesce(tiktok_watch.shop_products.title, excluded.title),
               url = coalesce(tiktok_watch.shop_products.url, excluded.url),
               image = coalesce(tiktok_watch.shop_products.image, excluded.image),
               seller_id = coalesce(tiktok_watch.shop_products.seller_id, excluded.seller_id),
               price = coalesce(tiktok_watch.shop_products.price, excluded.price)
             """,
-            (pid, p.get("title") or v.product_title, p.get("url"), p.get("image"), cat, p.get("seller_id"), p.get("price")),
+            (pid, p.get("title") or v.product_title, p.get("url"), p.get("image"), cat, p.get("seller_id"), p.get("price"), focus),
         )
         cur.execute(
             """

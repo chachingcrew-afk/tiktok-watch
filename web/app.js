@@ -185,7 +185,7 @@
   function selectView(v) {
     if (!["products", "women", "videos", "runs", "settings"].includes(v)) v = "products";
     const focus = v === "women" ? "women" : null;
-    if (focus !== P.focus) { P.focus = focus; P.page = 0; P.cat = ""; if (state.shop.length) { renderKpis(); renderSeg(); renderCats(); renderTable(); } }
+    if (focus !== P.focus) { P.focus = focus; P.page = 0; P.cat = ""; P.found = null; P.q = ""; $("q").value = ""; if (state.shop.length) { renderKpis(); renderSeg(); renderCats(); renderTable(); } }
     $("products-title").textContent = focus ? "Női ruha" : "Termékek";
     $("products-sub").textContent = focus ? `Női ruházat a TikTok Shopról, $${fsetting("fashion_min_price")}–${fsetting("fashion_max_price")} között, ismert márkák nélkül. Naponta bővül.` : "TikTok Shop termékek a beállított ársávban, napi eladás és bevétel szerint.";
     for (const b of document.querySelectorAll(".nav-item")) {
@@ -273,6 +273,7 @@
     };
   }
   function rows() {
+    if (P.found) return P.found.slice();
     const q = P.q.trim().toLowerCase();
     let list = state.shop.filter(segFilter(P.seg));
     if (P.cat) list = list.filter(p => p.category_id === P.cat);
@@ -396,7 +397,30 @@
   }
 
   // toolbar events
-  $("q").addEventListener("input", () => { P.q = $("q").value; P.page = 0; renderTable(); });
+  // Typing 3+ characters searches every stored product on the server, whatever the price band or tab.
+  let searchTimer = null, searchSeq = 0;
+  $("q").addEventListener("input", () => {
+    P.q = $("q").value; P.page = 0;
+    clearTimeout(searchTimer);
+    const q = P.q.trim();
+    if (q.length < 3) { P.found = null; renderSearchNote(); renderTable(); return; }
+    searchTimer = setTimeout(async () => {
+      const seq = ++searchSeq;
+      try {
+        const res = await rpc("tr_search", { p_q: q }) || [];
+        if (seq !== searchSeq) return;
+        const byId = new Map(state.shop.map(p => [p.product_id, p]));
+        P.found = res.map(r => { const have = byId.get(r.product_id); if (have) return have; state.shop.push(r); return r; });
+        brandCache = new WeakMap();
+      } catch (e) { banner(errText(e), true); P.found = null; }
+      renderSearchNote(); renderTable();
+    }, 300);
+  });
+  function renderSearchNote() {
+    const n = $("products-sub");
+    if (P.found) n.textContent = `Keresés az összes termékben („${P.q.trim()}”): ${nf(P.found.length)} találat, ársávtól és szűrőktől függetlenül.`;
+    else selectView(store.get("view") || "products", true);
+  }
   $("cat").addEventListener("change", () => { P.cat = $("cat").value; P.page = 0; renderTable(); });
   $("sort").addEventListener("change", () => { P.sort = $("sort").value; store.set("sort", P.sort); renderTable(); });
   for (const id of ["pmin", "pmax"]) $(id).addEventListener("change", () => {
