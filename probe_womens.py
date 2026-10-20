@@ -15,7 +15,7 @@ def main() -> None:
     conn = db.connect()
     out = {}
     for root in ROOTS:
-        seen, per_page, subs = set(), [], set()
+        seen, per_page, subs, prices = set(), [], set(), []
         for n in range(1, 9):
             url = f"https://shop.tiktok.com/us/c/{root}" + (f"?page={n}" if n > 1 else "")
             try:
@@ -28,10 +28,12 @@ def main() -> None:
             seen |= {p["product_id"] for p in items}
             per_page.append(f"{len(items)}/{len(new)}new")
             subs |= set(re.findall(r"/us/c/([a-z0-9\-]+/\d+)", _unescape(html)))
-            prices = [p["price"] for p in items if p["price"]]
+            prices += [p["price"] for p in items if p["price"]]
         out[root] = {"unique": len(seen), "pages": per_page, "subcats": sorted(subs)[:80],
                      "price_sample": sorted(prices)[:3] + sorted(prices)[-3:] if prices else []}
     run_id = db.start_run(conn, "probe_womens")
+    import json
+    out = json.loads(json.dumps(out, default=str))
     db.finish_run(conn, run_id, True, out)
     conn.close()
 
