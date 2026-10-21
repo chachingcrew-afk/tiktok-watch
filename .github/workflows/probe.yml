@@ -7,6 +7,10 @@ on:
         description: 'Probe script to run'
         type: string
         default: 'probe_product.py'
+      video_urls:
+        description: 'Comma separated TikTok video URLs'
+        type: string
+        default: ''
 
 jobs:
   run:
@@ -26,3 +30,4 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           PROXY_URL: ${{ secrets.PROXY_URL }}
           MS_TOKEN: ${{ secrets.MS_TOKEN }}
+          VIDEO_URLS: ${{ inputs.video_urls }}
