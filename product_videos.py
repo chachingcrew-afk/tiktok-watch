@@ -130,6 +130,9 @@ def small_cover(url: str | None) -> str | None:
         return None
 
 
+BUDGET_S = int(os.environ.get("VIDEOS_BUDGET_S", "1800"))  # stop starting new products after 30 minutes
+
+
 def run(conn, min_sold: int, stats: Counter, limit: int = PER_RUN) -> None:
     todo = db.products_for_videos(conn, min_sold, limit)
     if not todo:
@@ -146,16 +149,22 @@ def run(conn, min_sold: int, stats: Counter, limit: int = PER_RUN) -> None:
                 v["cover"] = small_cover(v["cover_url"])
         return pid, vids, want_covers
 
+    deadline = time.monotonic() + BUDGET_S
+    chunk = WORKERS * 4
     with ThreadPoolExecutor(WORKERS) as pool:
-        for pid, vids, want_covers in pool.map(one, todo):
-            if isinstance(vids, Exception):
-                stats["video_errors"] += 1
-                db.mark_videos_checked(conn, pid)
-            else:
-                db.save_product_videos(conn, pid, vids, keep_covers=bool(want_covers))
-                stats["video_products"] += 1
-                stats["videos"] += len(vids)
-            conn.commit()
+        for i in range(0, len(todo), chunk):
+            if time.monotonic() > deadline:
+                stats["video_products_skipped"] += len(todo) - i
+                break
+            for pid, vids, want_covers in pool.map(one, todo[i:i + chunk]):
+                if isinstance(vids, Exception):
+                    stats["video_errors"] += 1
+                    db.mark_videos_checked(conn, pid)
+                else:
+                    db.save_product_videos(conn, pid, vids, keep_covers=bool(want_covers))
+                    stats["video_products"] += 1
+                    stats["videos"] += len(vids)
+                conn.commit()
 
 
 if __name__ == "__main__":  # python product_videos.py [limit]

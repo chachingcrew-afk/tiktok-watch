@@ -18,7 +18,7 @@ from core import Config, proxy_settings
 from session import setup_logging
 
 log = logging.getLogger("tiktok-watch")
-LIMIT = int(os.environ.get("SHOP_6H_LIMIT", "3000"))
+LIMIT = int(os.environ.get("SHOP_6H_LIMIT", "8000"))
 
 
 async def main() -> None:

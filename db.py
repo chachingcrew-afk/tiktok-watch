@@ -219,7 +219,8 @@ def shop_products_to_refresh(conn, min_sold: int) -> list[tuple[str, str]]:
 
 
 def shop_products_6h(conn, min_price: float, max_price: float, limit: int, fmin: float = 0, fmax: float = 0) -> list[tuple[str, str]]:
-    """Products worth a 6-hourly sales check: starred ones first, then the fastest sellers in the price band."""
+    """Products for the sales check: starred first, then fast sellers (20+/day) every run, then the rest
+    oldest-checked first, so products without a daily rate yet get their second measurement too."""
     with conn.cursor() as cur:
         cur.execute(
             "select p.product_id, p.url from tiktok_watch.shop_products p"
@@ -227,7 +228,7 @@ def shop_products_6h(conn, min_price: float, max_price: float, limit: int, fmin:
             " where not p.hidden and p.url is not null and p.last_seen > now() - interval '14 days'"
             "   and (p.starred or p.price between %s and %s or p.price is null or (p.focus = 'women' and p.price between %s and %s))"
             "   and (p.page_checked_at is null or p.page_checked_at < now() - interval '5 hours')"
-            " order by p.starred desc, v.sold_per_day desc nulls last, p.last_sold desc nulls last limit %s",
+            " order by p.starred desc, (coalesce(v.sold_per_day, 0) >= 20) desc, p.page_checked_at asc nulls first limit %s",
             (min_price, max_price, fmin, fmax, limit),
         )
         return cur.fetchall()
