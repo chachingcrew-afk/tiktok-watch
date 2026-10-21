@@ -216,7 +216,10 @@ async def read_pages(conn, proxies, todo: list[tuple[str, str]]) -> None:
                 return pid, e
 
     # save each page as soon as it arrives, so a slow or interrupted run keeps what it read
-    for fut in asyncio.as_completed([one(pid, url) for pid, url in todo]):
+    # Create the tasks in list order (as_completed would shuffle bare coroutines through a set), so the
+    # semaphore hands out slots in priority order: starred and fast sellers first, before the time budget runs out.
+    tasks = [asyncio.create_task(one(pid, url)) for pid, url in todo]
+    for fut in asyncio.as_completed(tasks):
         pid, info = await fut
         if info is None:
             STATS["product_pages_skipped"] += 1
