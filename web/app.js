@@ -149,7 +149,7 @@
   const P = { focus: null, seg: store.get("seg") || "all", sort: store.get("sort") || "revenue_per_day", q: "", cat: "", pmin: null, pmax: null, page: 0, sel: null };
   const V = { seg: "tracking", sort: "recent_views_per_hour", q: "" };
   const PAGE = 50;
-  const cache = { thumbs: {}, gallery: {}, videos: {}, hist: {} };
+  const cache = { thumbs: {}, gallery: {}, videos: {}, hist: {}, reviews: {} };
 
   async function startApp(session) {
     show("app");
@@ -506,7 +506,8 @@
           stat(p.sold_per_day_week != null ? "+" + nf(p.sold_per_day_week) : "–", "napi átlag a héten")),
         salesChart(cache.hist[id]),
         el("div", { class: "d-note" }, "A bevétel a mostani ár és a napi eladott darab szorzata, a TikTok Shop eladásszámából. A növekedés: a napi eladás az addig eladott darabok hány százaléka.")),
-      videosSection(p));
+      videosSection(p),
+      reviewsSection(p));
   }
   function galleryEl(p) {
     const imgs = cache.gallery[p.product_id];
@@ -564,6 +565,135 @@
     else coverFor(v, box);
     return box;
   }
+  // ---------- customer reviews (saved by the Termékradar Chrome extension) ----------
+  let extVersion = null;
+  window.addEventListener("message", (e) => {
+    if (e.source === window && e.data && e.data.src === "tr-ext" && e.data.cmd === "pong") {
+      const was = extVersion; extVersion = e.data.version || "?";
+      if (!was && P.sel) renderDrawer();
+    }
+  });
+  window.postMessage({ src: "tr-app", cmd: "ping" }, location.origin);
+  // coming back from the TikTok tab: show the freshly saved reviews
+  window.addEventListener("focus", () => {
+    const id = P.sel;
+    if (id && cache.reviews[id] !== undefined && cache.reviews[id] !== null) { delete cache.reviews[id]; renderDrawer(); }
+  });
+  const REVIEW_TOPICS = [
+    ["size", "Méret, szabás", /\b(size|sizes|sizing|small|smaller|big|bigger|large|tight|loose|fit|fits|fitting|runs?|length|long|short|waist|petite|tall|roll(s|ing)? (down|up)|slid|falls? down|talla|grande|chic[oa])\b|\bx+l\b/i],
+    ["quality", "Anyag, minőség", /\b(quality|material|fabric|thin|thick|cheap|rip|ripped|tear|tore|torn|hole|holes|snag|pill|pilling|seam|stitch|broke|broken|damaged|stain|smell|itch|itchy|see.?through|sheer|transparent|squeak|squeaky|warm|cold|soft|lint|fuzz|run in|static)\b/i],
+    ["look", "Szín, kinézet", /\b(colou?r|shade|dark|darker|light|lighter|tone|looks? (different|nothing)|picture|pictures|photo|advertis|not as (shown|pictured|described))\b/i],
+    ["shipping", "Szállítás, csomag", /\b(ship|shipping|shipped|deliver|delivery|arriv|package|late|missing|wrong (item|size|color)|never (came|received|got)|refund|return|returned)\b/i],
+    ["praise", "Dicséret", /\b(love|loved|great|perfect|comfortable|comfy|recommend|amazing|obsessed|cute|best|worth|happy)\b/i],
+  ];
+  const reviewTopics = (r) => REVIEW_TOPICS.filter(([, , re]) => re.test(r.text || "")).map(([k]) => k);
+  const RV = { star: 0, topic: "", imgs: false, limit: 30 };
+  let rvFor = null, rvPoll = null;
+  function requestReviews(p) {
+    const url = (p.url || `https://shop.tiktok.com/view/product/${p.product_id}?region=US`).split("#")[0] + "#tr-reviews";
+    window.postMessage({ src: "tr-app", cmd: "session" }, location.origin);
+    window.open(url, "_blank", "noopener");
+    clearInterval(rvPoll);
+    const id = p.product_id, until = Date.now() + 4 * 60 * 1000;
+    const tick = async () => {
+      if (Date.now() > until || P.sel !== id) { clearInterval(rvPoll); return; }
+      try {
+        const res = await rpc("tr_reviews", { pid: id });
+        const prev = cache.reviews[id];
+        cache.reviews[id] = res;
+        const changed = !prev || (prev.reviews || []).length !== (res.reviews || []).length || (prev.request || {}).status !== (res.request || {}).status;
+        if (changed) renderDrawer();
+        if (res.request && res.request.status === "done" && res.request.finished_at && Date.now() - new Date(res.request.finished_at).getTime() < 5 * 60 * 1000) clearInterval(rvPoll);
+      } catch (_) {}
+    };
+    rvPoll = setInterval(tick, 5000);
+  }
+  function installHelp() {
+    return el("div", { class: "d-note rv-help" },
+      el("b", {}, "Ehhez a Termékradar Chrome-bővítmény kell (egyszer kell telepíteni):"),
+      el("ol", {},
+        el("li", {}, el("a", { href: "termekradar-bovitmeny.zip", download: "" }, "Töltsd le a bővítményt"), ", és csomagold ki egy mappába."),
+        el("li", {}, "Chrome-ban nyisd meg ezt a címet: ", el("code", {}, "chrome://extensions")),
+        el("li", {}, "Jobb fent kapcsold be a „Fejlesztői mód” kapcsolót."),
+        el("li", {}, "Kattints a „Kicsomagolt bővítmény betöltése” gombra, és válaszd ki a kicsomagolt mappát."),
+        el("li", {}, "Frissítsd ezt az oldalt.")));
+  }
+  function reviewsSection(p) {
+    const id = p.product_id;
+    if (rvFor !== id) { rvFor = id; Object.assign(RV, { star: 0, topic: "", imgs: false, limit: 30 }); }
+    ensure("reviews", id, () => rpc("tr_reviews", { pid: id }));
+    const data = cache.reviews[id];
+    const list = data && Array.isArray(data.reviews) ? data.reviews : [];
+    const req = data && data.request;
+    const sum = req && req.summary;
+    const head = el("h3", {}, "Vásárlói vélemények", el("span", {},
+      req && req.finished_at ? `${nf(list.length)} mentve · ${ago(req.finished_at)}` : req && req.status === "running" ? "mentés folyamatban…" : ""));
+    const getBtn = el("button", { type: "button", class: "btn" + (list.length ? "" : " primary"), onclick: () => requestReviews(p) },
+      list.length ? "Vélemények frissítése" : "Vélemények lekérése");
+    const actions = el("div", { class: "d-actions" }, getBtn);
+    if (!extVersion) return el("div", { class: "d-sec" }, head, list.length ? null : el("div", { class: "d-note" }, "A TikTok Shop vásárlói véleményei képekkel, csoportosítva: méret, minőség, szín, szállítás."), installHelp(), list.length ? reviewsBody(p, list, sum) : null);
+    if (!data) return el("div", { class: "d-sec" }, head, el("div", { class: "d-note" }, "Betöltés…"));
+    if (!list.length) return el("div", { class: "d-sec" }, head, actions,
+      el("div", { class: "d-note" }, "Megnyílik a termék TikTok Shop oldala egy új fülön, és a bővítmény elmenti a véleményeket: az összes 1-3 csillagosat, a friss 4-5 csillagosakat és a képeseket. Kb. fél perc, utána itt megjelennek."));
+    return el("div", { class: "d-sec" }, head, actions, reviewsBody(p, list, sum));
+  }
+  function reviewsBody(p, list, sum) {
+    const stars = (n) => "★".repeat(n || 0) + "☆".repeat(Math.max(0, 5 - (n || 0)));
+    // rating distribution from TikTok's own totals
+    let dist = null;
+    if (sum && sum.rating_result) {
+      const tot = Object.values(sum.rating_result).reduce((a, b) => a + Number(b), 0) || 1;
+      dist = el("div", { class: "rv-dist" },
+        el("div", { class: "rv-score" }, el("b", {}, dec(sum.overall_score)), el("span", {}, `${nf(sum.review_count)} vélemény`)),
+        el("div", { class: "rv-bars" }, ...[5, 4, 3, 2, 1].map(s => {
+          const n = Number(sum.rating_result[s] || 0);
+          return el("button", { type: "button", class: "rv-bar" + (RV.star === s ? " on" : ""), onclick: () => { RV.star = RV.star === s ? 0 : s; RV.limit = 30; renderDrawer(); } },
+            el("span", {}, s + "★"), el("i", {}, el("u", { style: `width:${(n / tot * 100).toFixed(1)}%` })), el("em", {}, nf(n) + " · " + Math.round(n / tot * 100) + "%"));
+        })));
+    }
+    // topics among the saved reviews; for the low ones (1-3 star) these are the complaints
+    const low = list.filter(r => r.rating <= 3);
+    const topicCount = (k) => (k === "praise" ? list : low).filter(r => reviewTopics(r).includes(k)).length;
+    const chips = el("div", { class: "rv-chips" },
+      ...REVIEW_TOPICS.map(([k, label]) => el("button", { type: "button", class: "rv-chip" + (RV.topic === k ? " on" : ""), "aria-pressed": String(RV.topic === k),
+        onclick: () => { RV.topic = RV.topic === k ? "" : k; RV.limit = 30; renderDrawer(); } }, label, el("b", {}, nf(topicCount(k))))),
+      el("button", { type: "button", class: "rv-chip" + (RV.imgs ? " on" : ""), "aria-pressed": String(RV.imgs), onclick: () => { RV.imgs = !RV.imgs; RV.limit = 30; renderDrawer(); } },
+        "Képes", el("b", {}, nf(list.filter(r => r.images && r.images.length).length))));
+    const chipNote = el("div", { class: "d-note" }, "A témák számai az 1-3 csillagos véleményekből jönnek (ott vannak a panaszok), a dicséret az összesből.");
+    // which variants the unhappy buyers bought
+    const bad = list.filter(r => r.rating <= 2 && r.sku);
+    let variants = null;
+    if (bad.length >= 5) {
+      const cnt = new Map(), all = new Map();
+      for (const r of bad) cnt.set(r.sku, (cnt.get(r.sku) || 0) + 1);
+      for (const r of list) if (r.sku) all.set(r.sku, (all.get(r.sku) || 0) + 1);
+      const top = [...cnt.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+      variants = el("div", { class: "rv-vars" }, el("div", { class: "rv-vars-h" }, "Melyik változatot vették, akik 1-2 csillagot adtak"),
+        ...top.map(([sku, n]) => el("div", { class: "rv-var" }, el("span", {}, sku), el("b", {}, `${n} panasz`), el("em", {}, `${Math.round(n / all.get(sku) * 100)}% a mentett véleményeiből`))));
+    }
+    // the list
+    let shown = list.slice();
+    if (RV.star) shown = shown.filter(r => r.rating === RV.star);
+    if (RV.topic) shown = shown.filter(r => reviewTopics(r).includes(RV.topic) && (RV.topic === "praise" || RV.star || r.rating <= 3));
+    if (RV.imgs) shown = shown.filter(r => r.images && r.images.length);
+    const filterNote = (RV.star || RV.topic || RV.imgs) ? el("div", { class: "d-note" }, `${nf(shown.length)} vélemény a szűrőkkel. `,
+      el("button", { type: "button", class: "link", onclick: () => { Object.assign(RV, { star: 0, topic: "", imgs: false, limit: 30 }); renderDrawer(); } }, "Szűrők törlése")) : null;
+    const items = shown.slice(0, RV.limit).map(r => el("div", { class: "rv" },
+      el("div", { class: "rv-top" }, el("span", { class: "rv-stars s" + r.rating, "aria-label": r.rating + " csillag" }, stars(r.rating)),
+        r.review_time ? el("span", {}, new Date(r.review_time).toLocaleDateString("hu-HU")) : null,
+        r.verified ? el("span", { class: "chip" }, "Igazolt vásárlás") : null,
+        r.sku ? el("span", { class: "chip blue" }, r.sku) : null),
+      r.text ? el("p", {}, r.text) : el("p", { class: "d-note" }, "(csak csillag, szöveg nélkül)"),
+      r.images && r.images.length ? el("div", { class: "rv-imgs" }, ...r.images.map(b => el("a", { href: "data:image/jpeg;base64," + b, target: "_blank", rel: "noopener", onclick: (e) => { e.preventDefault(); openImage("data:image/jpeg;base64," + b); } },
+        el("img", { src: "data:image/jpeg;base64," + b, alt: "Vásárlói fotó", loading: "lazy" })))) : null));
+    const more = shown.length > RV.limit ? el("button", { type: "button", class: "btn wide", onclick: () => { RV.limit += 50; renderDrawer(); } }, `Még ${nf(Math.min(50, shown.length - RV.limit))} vélemény`) : null;
+    return el("div", { class: "rv-wrap" }, dist, chips, chipNote, variants, filterNote, ...items, more);
+  }
+  function openImage(src) {
+    const w = window.open("", "_blank");
+    if (w) { w.document.title = "Vásárlói fotó"; const i = w.document.createElement("img"); i.src = src; i.style.cssText = "max-width:100%;image-rendering:auto"; w.document.body.style.cssText = "margin:0;background:#111;display:grid;place-items:center;min-height:100vh"; w.document.body.append(i); }
+  }
+
   function videosSection(p) {
     const head = el("h3", {}, "Videók ehhez a termékhez", el("span", {}, (p.video_count ? `${nf(p.video_count)} videó · ${short(p.video_views)} nézés` : "") + (Number(p.fresh_videos) ? ` · ${nf(p.fresh_videos)} friss` : "")));
     if (!p.video_count && !p.fresh_videos) return el("div", { class: "d-sec" }, head, el("div", { class: "d-note" }, p.video_count === 0 ? "A TikTok Shop nem mutat videót ehhez a termékhez." : "A videókat a napi futás tölti le a 100+ eladásos és a csillagozott termékekhez."));

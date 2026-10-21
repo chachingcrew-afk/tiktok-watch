@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Termékradar – vélemények",
+  "version": "1.0.0",
+  "description": "Elmenti egy TikTok Shop termék vásárlói véleményeit (képekkel) a Termékradarba.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://shop.tiktok.com/*",
+    "https://sapxyvfiqyshwnwarctj.supabase.co/*",
+    "https://*.ttcdn-us.com/*",
+    "https://*.tiktokcdn-us.com/*",
+    "https://*.tiktokcdn.com/*",
+    "https://*.ibyteimg.com/*",
+    "https://*.byteimg.com/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://termekradar-a69s.netlify.app/*"],
+      "js": ["bridge.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://shop.tiktok.com/*/pdp/*", "https://shop.tiktok.com/view/product/*"],
+      "js": ["shop-main.js"],
+      "world": "MAIN",
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://shop.tiktok.com/*/pdp/*", "https://shop.tiktok.com/view/product/*"],
+      "js": ["shop.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": { "48": "icon48.png", "128": "icon128.png" }
+}
