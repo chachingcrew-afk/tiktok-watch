@@ -134,6 +134,7 @@ class ParsedVideo:
     has_product: bool
     product_title: str | None
     product_info: dict | None
+    products: list = field(default_factory=list)  # every linked shop product (product_info is the first)
 
 
 def _int(v) -> int:
@@ -172,6 +173,24 @@ def _shop_product(d: dict) -> dict | None:
         "price": price if isinstance(price, (int, float)) and price > 0 else None,
         "currency": d.get("currency"),
     }
+
+
+def products_from_anchors(data: dict) -> list[dict]:
+    """Every TikTok Shop product linked to a video (a video can link several, e.g. a whole outfit)."""
+    out, seen = [], set()
+    for anchor in data.get("anchors") or []:
+        if not isinstance(anchor, dict):
+            continue
+        for item in _json_maybe(anchor.get("extra")) or []:
+            if not isinstance(item, dict) or str(item.get("type")) != "33":
+                continue
+            inner = _json_maybe(item.get("extra"))
+            product = _shop_product(inner) if isinstance(inner, dict) else None
+            if product and product["product_id"] not in seen:
+                seen.add(product["product_id"])
+                product["title"] = product["title"] or (item.get("keyword") or "").strip() or None
+                out.append(product)
+    return out
 
 
 def _product_from_anchors(data: dict) -> tuple[str | None, dict | None]:
@@ -226,6 +245,7 @@ def parse_video(data: dict) -> ParsedVideo | None:
         has_product=bool(product_info) or keyword_hit,
         product_title=product_title,
         product_info=product_info,
+        products=products_from_anchors(data),
     )
 
 

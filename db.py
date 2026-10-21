@@ -367,10 +367,13 @@ def link_feed_video(conn, v: ParsedVideo) -> None:
     """A fresh feed video with a TikTok Shop product: make sure the product is known (so its sales get
     measured) and record the video under it. The product page's own video list is months old, so
     these feed videos are what shows that a product is being pushed right now."""
-    p = v.product_info or {}
-    pid = p.get("product_id")
-    if not pid:
-        return
+    for p in (v.products or [v.product_info or {}]):
+        if p.get("product_id"):
+            _link_feed_product(conn, v, p)
+
+
+def _link_feed_product(conn, v: ParsedVideo, p: dict) -> None:
+    pid = p["product_id"]
     cat = (p.get("category") or "").split(" › ")[-1] or None
     focus = "women" if (p.get("category") or "").startswith("Womenswear") else None
     with conn.cursor() as cur:
