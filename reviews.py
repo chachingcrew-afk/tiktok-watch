@@ -65,9 +65,10 @@ async def fetch_reviews(page, product_id: str, plan=PLAN) -> dict:
             data = None
             for attempt in range(3):
                 try:
-                    j = await page.evaluate(JS_FETCH, [str(product_id), ft, fv, pg, PAGE_SIZE])
+                    j = await asyncio.wait_for(page.evaluate(JS_FETCH, [str(product_id), ft, fv, pg, PAGE_SIZE]), 30)
                 except Exception as e:  # noqa: BLE001
                     j = {"code": -1, "message": str(e)[:120]}
+                log.info("reviews %s f%s/%s p%s: code %s", product_id, ft, fv, pg, j.get("code"))
                 if j.get("code") == 0:
                     data = j.get("data") or {}
                     break
@@ -93,6 +94,11 @@ async def open_shop_page(pw, url: str):
     browser = await pw.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
     context = await browser.new_context(user_agent=UA, locale="en-US", viewport={"width": 1366, "height": 900})
     page = await context.new_page()
-    await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+    log.info("opening %s", url)
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+    except Exception as e:  # noqa: BLE001
+        log.warning("page load: %s", e)
     await page.wait_for_timeout(4000)
+    log.info("page ready: %s", await page.title())
     return browser, page

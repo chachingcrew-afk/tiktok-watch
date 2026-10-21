@@ -1,6 +1,7 @@
 """Probe: product reviews through a real browser."""
 import asyncio
 import json
+import logging
 import time
 
 from playwright.async_api import async_playwright
@@ -11,13 +12,16 @@ import reviews
 PID = "1731603196057654264"
 
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
+
+
 async def main():
     out = {}
     t = time.time()
     async with async_playwright() as pw:
         browser, page = await reviews.open_shop_page(pw, f"https://shop.tiktok.com/us/pdp/x/{PID}")
         out["cookies"] = [c["name"] for c in await page.context.cookies()]
-        res = await reviews.fetch_reviews(page, PID)
+        res = await asyncio.wait_for(reviews.fetch_reviews(page, PID, plan=[(1, 1, 100), (1, 5, 50), (2, 0, 50)]), 600)
         await browser.close()
     rv = res["reviews"]
     out.update(seconds=round(time.time() - t), n=len(rv), summary=res["summary"], errors=res["errors"][:10],
