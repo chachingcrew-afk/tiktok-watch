@@ -99,7 +99,7 @@ async def run(cfg, conn, stats) -> None:
             stats["stores_skipped"] += 1
             continue
         if isinstance(html, Exception):
-            stats["store_errors"] += 1
+            stats["store_fetch_errors"] += 1
             continue
         try:
             info = parse_store(html)
@@ -136,3 +136,24 @@ async def run(cfg, conn, stats) -> None:
             conn.rollback()
             stats["store_errors"] += 1
             log.warning("Store %s: %s", seller_id, e)
+
+
+if __name__ == "__main__":  # python stores.py: only the store step, logged as a "stores" run
+    from collections import Counter
+
+    import netstats as _ns
+    from core import Config
+    from session import setup_logging
+
+    setup_logging()
+    conn = db.connect()
+    cfg = Config()
+    cfg.apply_overrides(db.load_settings(conn))
+    st: Counter = Counter()
+    rid = db.start_run(conn, "stores")
+    try:
+        asyncio.run(run(cfg, conn, st))
+    except BaseException as e:
+        db.finish_run(conn, rid, False, {**st, **_ns.summary()}, str(e))
+        raise
+    db.finish_run(conn, rid, True, {**st, **_ns.summary()})

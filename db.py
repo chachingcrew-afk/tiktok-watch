@@ -493,7 +493,7 @@ def save_store_visit(conn, seller_id: str, info: dict, tracked: float | None) ->
             """
             with prev as (
               select sold, taken_at from tiktok_watch.store_snapshots
-              where seller_id = %(s)s and taken_at < now() - interval '20 hours' order by taken_at desc limit 1),
+              where seller_id = %(s)s and taken_at < now() - interval '20 hours' order by taken_at desc limit 1)
             insert into tiktok_watch.stores (seller_id, shop_name, url, sold_count, product_count, followers, rating, sold_per_day, tracked_per_day, checked_at)
             values (%(s)s, %(name)s, %(url)s, %(sold)s, %(pc)s, %(fol)s, %(rat)s,
                     (select case when %(sold)s >= prev.sold then round((%(sold)s - prev.sold) / (extract(epoch from now() - prev.taken_at) / 86400.0)) end from prev),
