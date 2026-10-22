@@ -22,7 +22,7 @@ from fetch_video import HEADERS
 
 log = logging.getLogger(__name__)
 
-MIN_PRODUCT_PER_DAY = 10     # visit the stores of women's products selling at least this much
+MIN_PRODUCT_PER_DAY = 40     # visit the stores of women's products selling at least this much a day (or starred)
 REVISIT_HOURS = 20
 MIN_PRODUCT_SOLD = 8000      # a store product must have sold this many in total to be added
 MIN_PRICE, MAX_PRICE = 30, 70  # and cost this much (USD)
