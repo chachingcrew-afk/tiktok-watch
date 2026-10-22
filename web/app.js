@@ -177,7 +177,7 @@
   $("refresh").addEventListener("click", load);
 
   function renderAll() {
-    renderStatus(); renderKpis(); renderSeg(); renderCats(); renderTable();
+    renderStatus(); renderKpis(); renderSeg(); renderCats(); renderTypes(); renderTable();
     renderVideos(); renderRuns(); if (!dirty) renderSettings();
   }
 
@@ -185,7 +185,7 @@
   function selectView(v) {
     if (!["products", "women", "videos", "runs", "settings"].includes(v)) v = "products";
     const focus = v === "women" ? "women" : null;
-    if (focus !== P.focus) { P.focus = focus; P.page = 0; P.cat = ""; P.found = null; P.q = ""; $("q").value = ""; if (state.shop.length) { renderKpis(); renderSeg(); renderCats(); renderTable(); } }
+    if (focus !== P.focus) { P.focus = focus; P.page = 0; P.cat = ""; P.found = null; P.q = ""; $("q").value = ""; if (state.shop.length) { renderKpis(); renderSeg(); renderCats(); renderTypes(); renderTable(); } }
     $("products-title").textContent = focus ? "Női ruha" : "Termékek";
     $("products-sub").textContent = focus ? `Női ruházat a TikTok Shopról, $${fsetting("fashion_min_price")}–${fsetting("fashion_max_price")} között, ismert márkák nélkül. Naponta bővül.` : "TikTok Shop termékek a beállított ársávban, napi eladás és bevétel szerint.";
     for (const b of document.querySelectorAll(".nav-item")) {
@@ -276,7 +276,7 @@
     if (P.found) return P.found.slice();
     const q = P.q.trim().toLowerCase();
     let list = state.shop.filter(segFilter(P.seg));
-    if (P.cat) list = list.filter(p => p.category_id === P.cat);
+    if (P.cat) list = list.filter(p => P.cat.startsWith("t:") ? wtype(p)[0] === P.cat.slice(2) : p.category_id === P.cat);
     if (q) list = list.filter(p => [p.title, p.shop_name, p.category_name].some(s => (s || "").toLowerCase().includes(q)));
     const key = (p) => P.sort === "first_seen" ? new Date(p.first_seen).getTime() : Number(p[P.sort] ?? NaN);
     return list.sort((a, b) => {
@@ -305,10 +305,70 @@
       onclick: () => { P.seg = k; P.page = 0; store.set("seg", k); renderSeg(); renderTable(); },
     }, label, el("em", {}, nf(state.shop.filter(segFilter(k)).length)))));
   }
+  // ---------- women's clothing types (from the product title, first matching rule wins) ----------
+  const DRESS = /\b(dress|dresses|sundress|gown)\b/i;
+  const WTYPES = [
+    ["tights", "Harisnya", /\b(tights|pantyhose|stockings?)\b/i],
+    ["shape", "Alakformáló", /\b(shapewear|faja|fajas|waist trainers?|waist cincher|body shaper|shaper|butt lifter|girdle)\b/i],
+    ["work", "Munkaruha", /\b(scrubs?|medical uniform|nursing scrub)\b/i],
+    ["bra", "Melltartó", /\b(bras?|bralettes?|brassieres?|nipple covers?|pasties)\b/i],
+    ["sleep", "Pizsama, otthoni", /\b(pajamas?|pyjamas?|pjs?|sleepwear|nightgown|nightdress|nightwear|robe|bathrobe|loungewear|lounge set)\b/i],
+    ["under", "Fehérnemű", /\b(panties|panty|underwear|briefs?|thongs?|lingerie|boyshorts?|hipster|knickers)\b/i],
+    ["set", "Szett, kétrészes", /\b(2[- ]?piece|two[- ]pieces?|3[- ]?piece|co-?ord|matching sets?|sets?)\b/i],
+    ["jump", "Overál, jumpsuit", /\b(jumpsuits?|rompers?|overalls?|onesie|playsuit)\b/i],
+    ["party", "Party, alkalmi ruha", (t) => DRESS.test(t) && /\b(party|club|cocktail|evening|formal|sequins?|prom|wedding|bridesmaid|homecoming|gala|night out|birthday)\b/i.test(t)],
+    ["dress", "Hétköznapi ruha", DRESS],
+    ["skirt", "Szoknya", /\b(skirts?|skorts?)\b/i],
+    ["shorts", "Rövidnadrág", /\bshorts\b/i],
+    ["leggings", "Leggings", /\bleggings?\b/i],
+    ["coat", "Kabát, dzseki", /\b(jackets?|coats?|blazers?|puffer|parka|(?:puffer|fleece|sherpa|quilted|down) vest|gilet|outerwear|shacket)\b/i],
+    ["knit", "Pulóver, kardigán", /\b(sweaters?|cardigans?|jumper|hoodies?|sweatshirts?|pullover|knitwear)\b/i],
+    ["jeans", "Farmer nadrág", /\b(jeans?|denim)\b/i],
+    ["pants", "Nadrág", /\b(pants|trousers|joggers|sweatpants|culottes|palazzo|wide[- ]leg)\b/i],
+    ["sleeveless", "Ujjatlan felső", /\b(tanks?|cami|camis|camisole|sleeveless|halter|tube top|strapless top|corset top|bustier)\b/i],
+    ["long", "Hosszú ujjú felső", /\blong[- ]?sleeves?/i],
+    ["short", "Rövid ujjú felső, póló", /\b(t-?shirts?|tees?|short[- ]?sleeves?)/i],
+    ["top", "Egyéb felső", /\b(tops?|blouses?|shirts?|bodysuits?|crop)\b/i],
+  ];
+  const wtypeCache = new Map();
+  function wtype(p) {
+    if (wtypeCache.has(p.product_id)) return wtypeCache.get(p.product_id);
+    // the title decides; TikTok's own category only when the title says nothing
+    let hit = ["other", "Egyéb"];
+    for (const t of [(p.title || "").replace(/【[^】]*】/g, " "), p.category_name || ""]) {
+      const m = WTYPES.find(([, , re]) => typeof re === "function" ? re(t) : re.test(t));
+      if (m) { hit = [m[0], m[1]]; break; }
+    }
+    wtypeCache.set(p.product_id, hit);
+    return hit;
+  }
+  function renderTypes() {
+    const box = $("wtypes");
+    if (!P.focus) { box.hidden = true; return; }
+    const agg = new Map();
+    for (const p of state.shop.filter(segFilter("all"))) {
+      const [k, label] = wtype(p);
+      const a = agg.get(k) || { label, n: 0, rev: 0 };
+      a.n++; a.rev += Number(p.revenue_per_day) || 0;
+      agg.set(k, a);
+    }
+    const list = [...agg.entries()].sort((x, y) => y[1].rev - x[1].rev);
+    box.hidden = false;
+    box.replaceChildren(el("span", { class: "wt-h" }, "Típusok napi bevétel szerint:"),
+      ...list.map(([k, a]) => el("button", { type: "button", class: "wt" + (P.cat === "t:" + k ? " on" : ""), "aria-pressed": String(P.cat === "t:" + k),
+        onclick: () => { P.cat = P.cat === "t:" + k ? "" : "t:" + k; P.page = 0; renderCats(); renderTypes(); renderTable(); } },
+        a.label, el("b", {}, money(a.rev)), el("em", {}, nf(a.n) + " db"))));
+  }
   function renderCats() {
     const counts = new Map();
     for (const p of state.shop) if (inView(p) && !p.hidden && p.category_id) counts.set(p.category_id, { name: p.category_name || p.category_id, n: (counts.get(p.category_id)?.n || 0) + 1 });
     const opts = [...counts.entries()].sort((a, b) => a[1].name.localeCompare(b[1].name, "hu"));
+    if (P.focus) {
+      const tc = new Map();
+      for (const p of state.shop) if (inView(p) && !p.hidden) { const [k] = wtype(p); tc.set(k, (tc.get(k) || 0) + 1); }
+      $("cat").replaceChildren(el("option", { value: "" }, "Minden típus"),
+        ...[...WTYPES.map(([k, l]) => [k, l]), ["other", "Egyéb"]].filter(([k]) => tc.get(k)).map(([k, l]) => el("option", { value: "t:" + k }, `${l} (${tc.get(k)})`)));
+    } else
     $("cat").replaceChildren(el("option", { value: "" }, "Minden kategória"), ...opts.map(([id, c]) => el("option", { value: id }, `${c.name} (${c.n})`)));
     $("cat").value = P.cat;
     $("pmin").placeholder = "Ár min " + priceMin(); $("pmax").placeholder = "max " + priceMax();
@@ -378,7 +438,7 @@
     if (isHot(p)) meta.push(el("span", { class: "chip heat" }, "Aktuális"));
     if (isWin(p)) meta.push(el("span", { class: "chip money" }, "Nyerő"));
     if (isNew(p)) meta.push(el("span", { class: "chip blue" }, "Új"));
-    meta.push(el("span", {}, [p.category_name, p.shop_name].filter(Boolean).join(" · ")));
+    meta.push(el("span", {}, [isWomen(p) ? wtype(p)[1] : p.category_name, p.shop_name].filter(Boolean).join(" · ")));
     const orig = p.price_original && Number(p.price_original) > Number(p.price) ? Number(p.price_original) : null;
     return el("tr", { class: P.sel === p.product_id ? "sel" : null, onclick: () => openProduct(p.product_id) },
       el("td", { class: "c-star" }, starBtn(p, toggleProductStar)),
@@ -421,7 +481,7 @@
     if (P.found) n.textContent = `Keresés az összes termékben („${P.q.trim()}”): ${nf(P.found.length)} találat, ársávtól és szűrőktől függetlenül.`;
     else selectView(store.get("view") || "products", true);
   }
-  $("cat").addEventListener("change", () => { P.cat = $("cat").value; P.page = 0; renderTable(); });
+  $("cat").addEventListener("change", () => { P.cat = $("cat").value; P.page = 0; renderTypes(); renderTable(); });
   $("sort").addEventListener("change", () => { P.sort = $("sort").value; store.set("sort", P.sort); renderTable(); });
   for (const id of ["pmin", "pmax"]) $(id).addEventListener("change", () => {
     const v = $(id).value.trim();
@@ -933,7 +993,7 @@
       state.settings = Object.assign({}, state.settings, vals);
       dirty = false; document.querySelector(".savebar").classList.remove("dirty");
       note.textContent = "Mentve. A következő futásnál már ezekkel megy.";
-      brandCache = new WeakMap(); renderKpis(); renderSeg(); renderCats(); renderTable();
+      brandCache = new WeakMap(); renderKpis(); renderSeg(); renderCats(); renderTypes(); renderTable();
     } catch (err) { note.textContent = errText(err); }
     finally { $("save").disabled = false; $("save").textContent = "Beállítások mentése"; }
   });
