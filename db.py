@@ -452,3 +452,71 @@ def retire_slow(conn) -> int:
             cur.execute(f"delete from tiktok_watch.{table} where product_id = any(%s)", (ids,))
     conn.commit()
     return len(ids)
+
+
+# ---------- stores (stores.py) ----------
+
+def stores_to_visit(conn, min_per_day: int, revisit_hours: int) -> list[tuple[str, str]]:
+    """Stores of tracked women's products selling at least min_per_day (or starred), not visited lately."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select p.seller_id, coalesce(max(st.url), 'https://shop.tiktok.com/us/store/s/' || p.seller_id)
+            from tiktok_watch.shop_products p
+            left join tiktok_watch.shop_product_scores v using (product_id)
+            left join tiktok_watch.stores st on st.seller_id = p.seller_id
+            where p.focus = 'women' and p.seller_id is not null and p.retired_at is null and not p.hidden
+              and (p.starred or v.sold_per_day >= %s)
+              and (st.checked_at is null or st.checked_at < now() - make_interval(hours => %s))
+            group by p.seller_id
+            order by bool_or(p.starred) desc, sum(coalesce(v.sold_per_day, 0)) desc
+            """,
+            (min_per_day, revisit_hours),
+        )
+        return cur.fetchall()
+
+
+def tracked_per_seller(conn) -> dict[str, float]:
+    """Sum of the daily sales of the products we track, per seller."""
+    with conn.cursor() as cur:
+        cur.execute("select p.seller_id, sum(v.sold_per_day) from tiktok_watch.shop_products p"
+                    " join tiktok_watch.shop_product_scores v using (product_id)"
+                    " where p.seller_id is not null and p.retired_at is null group by p.seller_id")
+        return {r[0]: float(r[1]) for r in cur.fetchall() if r[1] is not None}
+
+
+def save_store_visit(conn, seller_id: str, info: dict, tracked: float | None) -> dict:
+    """Store the visit; return the store's daily sales, what we track from it and what we know of it."""
+    with conn.cursor() as cur:
+        cur.execute("insert into tiktok_watch.store_snapshots (seller_id, sold) values (%s, %s)", (seller_id, info["sold"]))
+        cur.execute(
+            """
+            with prev as (
+              select sold, taken_at from tiktok_watch.store_snapshots
+              where seller_id = %(s)s and taken_at < now() - interval '20 hours' order by taken_at desc limit 1),
+            insert into tiktok_watch.stores (seller_id, shop_name, url, sold_count, product_count, followers, rating, sold_per_day, tracked_per_day, checked_at)
+            values (%(s)s, %(name)s, %(url)s, %(sold)s, %(pc)s, %(fol)s, %(rat)s,
+                    (select case when %(sold)s >= prev.sold then round((%(sold)s - prev.sold) / (extract(epoch from now() - prev.taken_at) / 86400.0)) end from prev),
+                    %(tracked)s, now())
+            on conflict (seller_id) do update set shop_name = coalesce(excluded.shop_name, tiktok_watch.stores.shop_name),
+              url = excluded.url, sold_count = excluded.sold_count, product_count = excluded.product_count,
+              followers = excluded.followers, rating = excluded.rating,
+              sold_per_day = coalesce(excluded.sold_per_day, tiktok_watch.stores.sold_per_day),
+              tracked_per_day = excluded.tracked_per_day, checked_at = now()
+            returning sold_per_day, tracked_per_day, explored_at
+            """,
+            {"s": seller_id, "name": info.get("shop_name"), "url": info.get("url") or f"https://shop.tiktok.com/us/store/s/{seller_id}",
+             "sold": info["sold"], "pc": info.get("product_count"), "fol": info.get("followers"), "rat": info.get("rating"),
+             "tracked": tracked},
+        )
+        spd, tpd, explored = cur.fetchone()
+        cur.execute("select product_id from tiktok_watch.shop_products where seller_id = %s", (seller_id,))
+        known = {r[0] for r in cur.fetchall()}
+    return {"sold_per_day": float(spd) if spd is not None else None, "tracked_per_day": float(tpd) if tpd is not None else None,
+            "explored_at": explored, "known": known}
+
+
+def mark_store_explored(conn, seller_id: str, added: int) -> None:
+    with conn.cursor() as cur:
+        cur.execute("update tiktok_watch.stores set explored_at = now(), added_total = coalesce(added_total, 0) + %s where seller_id = %s",
+                    (added, seller_id))

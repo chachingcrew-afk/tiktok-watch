@@ -24,6 +24,7 @@ import requests
 import db
 import netstats
 import gallery
+import stores
 import twins
 from core import Config, brand_of, proxy_settings
 from fetch_product import _unescape, fetch_product
@@ -246,6 +247,12 @@ async def main() -> None:
     _, proxies = proxy_settings(os.environ.get("PROXY_URL"))
     try:
         seen = await scan_categories(cfg, conn, proxies)
+        try:
+            await stores.run(cfg, conn, STATS)
+        except Exception as e:  # extra discovery; never fail the scan because of it
+            conn.rollback()
+            STATS["stores_failed"] += 1
+            log.warning("Store step failed: %s", e)
         await refresh_missing(cfg, conn, proxies, seen)
         STATS["retired"] += db.retire_slow(conn)
         try:
