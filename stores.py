@@ -90,6 +90,7 @@ async def run(cfg, conn, stats) -> None:
             except Exception as e:  # noqa: BLE001
                 return seller_id, e
 
+    urls = dict(todo)
     tasks = [asyncio.create_task(one(sid, url)) for sid, url in todo]
     for fut in asyncio.as_completed(tasks):
         seller_id, html = await fut
@@ -101,6 +102,7 @@ async def run(cfg, conn, stats) -> None:
             continue
         try:
             info = parse_store(html)
+            info["url"] = info["url"] or urls.get(seller_id)
             if info["sold"] is None:
                 stats["store_errors"] += 1
                 continue

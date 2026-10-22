@@ -162,7 +162,7 @@
     $("refresh").disabled = true; $("refresh").textContent = "Frissítés…";
     try {
       state = await rpc("tr_load");
-      state.shop = state.shop || []; state.videos = state.videos || []; state.history = state.history || {};
+      state.shop = state.shop || []; state.videos = state.videos || []; state.storeById = null; state.history = state.history || {};
       state.runs = state.runs || []; state.settings = state.settings || {};
       brandCache = new WeakMap();
       banner(null);
@@ -491,6 +491,7 @@
                      : el("button", { type: "button", class: "btn danger", onclick: () => setProductHidden(p, true) }, "Elrejtés"),
             p.url ? el("a", { class: "btn", href: p.url, target: "_blank", rel: "noopener" }, "TikTok Shop ↗") : null,
             p.image ? el("a", { class: "btn", href: "https://lens.google.com/uploadbyurl?url=" + encodeURIComponent(p.image), target: "_blank", rel: "noopener", title: "Képkeresés: kik árulják még, például AliExpressen" }, "Hol árulják még? ↗") : null),
+          storeNote(p),
           brand ? el("div", { class: "d-note" }, `Ismert márka (${brand}): saját tervezésű és gyártású termék, nem dropshippelhető.`) : null,
           Number(p.other_shops) > 0 ? el("div", { class: "d-note" }, `Más eladók is árulják: ${(p.twin_shops || []).join(", ")}. Valószínűleg közös gyárból jön.`) : null)),
       el("div", { class: "d-sec" },
@@ -508,6 +509,15 @@
         el("div", { class: "d-note" }, "A bevétel a mostani ár és a napi eladott darab szorzata, a TikTok Shop eladásszámából. A növekedés: a napi eladás az addig eladott darabok hány százaléka.")),
       videosSection(p),
       reviewsSection(p));
+  }
+  function storeNote(p) {
+    const st = p.seller_id && (state.storeById || (state.storeById = Object.fromEntries((state.stores || []).map(x => [x.seller_id, x]))))[p.seller_id];
+    if (!st) return null;
+    const parts = [`${short(st.sold_count)} eladás összesen`];
+    if (st.sold_per_day != null) parts.push(`napi kb. ${nf(st.sold_per_day)} db`);
+    if (st.tracked_per_day != null) parts.push(`ebből a követett termékei: ${nf(st.tracked_per_day)}/nap`);
+    if (st.added_total) parts.push(`${nf(st.added_total)} terméke került be a boltból`);
+    return el("div", { class: "d-note" }, "Bolt: ", st.url ? el("a", { href: st.url, target: "_blank", rel: "noopener" }, (st.shop_name || "megnyitás") + " ↗") : (st.shop_name || ""), " · " + parts.join(" · "));
   }
   function galleryEl(p) {
     const imgs = cache.gallery[p.product_id];
