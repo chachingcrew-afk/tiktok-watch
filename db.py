@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 import psycopg
 from psycopg.types.json import Jsonb
@@ -167,7 +167,8 @@ def hide_cheap_product(conn, product_id: str) -> int:
 
 # ---------- TikTok Shop category scan ----------
 
-def upsert_shop_product(conn, p: dict) -> None:
+def upsert_shop_product(conn, p: dict) -> bool:
+    """Save a product seen in a category listing. Returns False while the product stays retired."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -186,12 +187,19 @@ def upsert_shop_product(conn, p: dict) -> None:
               rating = coalesce(excluded.rating, tiktok_watch.shop_products.rating),
               reviews = coalesce(excluded.reviews, tiktok_watch.shop_products.reviews),
               last_sold = coalesce(excluded.last_sold, tiktok_watch.shop_products.last_sold),
-              last_seen = now(), last_checked = now()
+              last_seen = now(), last_checked = now(),
+              retired_at = case when tiktok_watch.shop_products.retired_at is not null and excluded.last_sold is not null
+                  and excluded.last_sold >= coalesce(tiktok_watch.shop_products.retired_sold, 0) + greatest(30,
+                      extract(epoch from now() - tiktok_watch.shop_products.retired_at) / 86400.0
+                      * coalesce((select (value)::text::numeric from tiktok_watch.settings where key = 'retire_below_per_day'), 3))
+                then null else tiktok_watch.shop_products.retired_at end
+            returning retired_at is null
             """,
             (p["product_id"], p.get("title"), p.get("url"), p.get("image"), p.get("category_id"),
              p.get("category_name"), p.get("shop_name"), p.get("seller_id"), p.get("price"),
              p.get("price_original"), p.get("rating"), p.get("reviews"), p.get("sold"), p.get("focus")),
         )
+        return bool(cur.fetchone()[0])
 
 
 def add_product_snapshot(conn, product_id: str, sold, price_min, price_max, source: str) -> None:
@@ -209,7 +217,7 @@ def shop_products_to_refresh(conn, min_sold: int) -> list[tuple[str, str]]:
     with conn.cursor() as cur:
         cur.execute(
             "select product_id, url from tiktok_watch.shop_products"
-            " where not hidden and url is not null and (coalesce(last_sold, 0) >= %s or starred)"
+            " where not hidden and retired_at is null and url is not null and (coalesce(last_sold, 0) >= %s or starred)"
             "   and last_seen > now() - interval '14 days'"
             "   and (page_checked_at is null or page_checked_at < now() - interval '5 hours')"
             " order by starred desc, last_sold desc nulls last",
@@ -225,7 +233,7 @@ def shop_products_6h(conn, min_price: float, max_price: float, limit: int, fmin:
         cur.execute(
             "select p.product_id, p.url from tiktok_watch.shop_products p"
             " left join tiktok_watch.shop_product_scores v using (product_id)"
-            " where not p.hidden and p.url is not null and p.last_seen > now() - interval '14 days'"
+            " where not p.hidden and p.retired_at is null and p.url is not null and p.last_seen > now() - interval '14 days'"
             "   and (p.starred or p.price between %s and %s or p.price is null or (p.focus = 'women' and p.price between %s and %s))"
             "   and (p.page_checked_at is null or p.page_checked_at < now() - interval '5 hours')"
             " order by p.starred desc, (coalesce(v.sold_per_day, 0) >= 20) desc, p.page_checked_at asc nulls first limit %s",
@@ -255,7 +263,7 @@ def products_without_thumb(conn, limit: int) -> list[tuple[str, str]]:
     with conn.cursor() as cur:
         cur.execute(
             "select product_id, image from tiktok_watch.shop_products"
-            " where thumb is null and image is not null and not hidden and last_seen > now() - interval '14 days'"
+            " where thumb is null and image is not null and not hidden and retired_at is null and last_seen > now() - interval '14 days'"
             " order by last_sold desc nulls last limit %s",
             (limit,),
         )
@@ -272,7 +280,7 @@ def products_without_gallery(conn, min_sold: int, limit: int) -> list[tuple[str,
     with conn.cursor() as cur:
         cur.execute(
             "select product_id, url from tiktok_watch.shop_products"
-            " where url is not null and not hidden and (coalesce(last_sold, 0) >= %s or starred)"
+            " where url is not null and not hidden and retired_at is null and (coalesce(last_sold, 0) >= %s or starred)"
             "   and last_seen > now() - interval '14 days'"
             "   and (gallery_at is null or (coalesce(gallery_count, 0) = 0 and gallery_at < now() - interval '3 days'))"
             " order by starred desc, last_sold desc nulls last limit %s",
@@ -318,7 +326,7 @@ def products_for_videos(conn, min_sold: int, limit: int) -> list[tuple]:
     with conn.cursor() as cur:
         cur.execute(
             "select product_id, seller_id, url, (starred or coalesce(last_sold, 0) >= 1000) from tiktok_watch.shop_products"
-            " where not hidden and url is not null and (coalesce(last_sold, 0) >= %s or starred)"
+            " where not hidden and retired_at is null and url is not null and (coalesce(last_sold, 0) >= %s or starred)"
             "   and last_seen > now() - interval '14 days'"
             "   and (videos_checked_at is null or videos_checked_at < now() - interval '20 hours'"
             "        or (video_count is null and videos_checked_at < now() - interval '1 hour'))"
@@ -387,9 +395,11 @@ def _link_feed_product(conn, v: ParsedVideo, p: dict) -> None:
               url = coalesce(tiktok_watch.shop_products.url, excluded.url),
               image = coalesce(tiktok_watch.shop_products.image, excluded.image),
               seller_id = coalesce(tiktok_watch.shop_products.seller_id, excluded.seller_id),
-              price = coalesce(tiktok_watch.shop_products.price, excluded.price)
+              price = coalesce(tiktok_watch.shop_products.price, excluded.price),
+              retired_at = case when %s then null else tiktok_watch.shop_products.retired_at end
             """,
-            (pid, p.get("title") or v.product_title, p.get("url"), p.get("image"), cat, p.get("seller_id"), p.get("price"), focus),
+            (pid, p.get("title") or v.product_title, p.get("url"), p.get("image"), cat, p.get("seller_id"), p.get("price"), focus,
+             v.created_at is not None and (datetime.now(timezone.utc) - v.created_at).days < 7),
         )
         cur.execute(
             """
@@ -403,3 +413,42 @@ def _link_feed_product(conn, v: ParsedVideo, p: dict) -> None:
             """,
             (pid, v.video_id, v.author, (v.description or "")[:500] or None, v.created_at, v.views, v.likes),
         )
+
+
+# ---------- retiring slow products ----------
+
+def retire_slow(conn) -> int:
+    """Products whose measured daily sales stay under the 'retire_below_per_day' setting leave tracking:
+    their snapshots, images and creator videos are deleted, only the product row stays (marked retired)
+    so the daily scan does not add them again. Starred products and products with a creator video from
+    the last 7 days are kept. A retired product comes back when it starts selling again (see upsert_shop_product)."""
+    with conn.cursor() as cur:
+        cur.execute("select coalesce((select (value)::text::numeric from tiktok_watch.settings where key = 'retire_below_per_day'), 3)")
+        limit = cur.fetchone()[0]
+        if not limit or limit <= 0:
+            return 0
+        cur.execute(
+            """
+            select v.product_id, v.sold_now from tiktok_watch.shop_product_scores v
+            join tiktok_watch.shop_products p using (product_id)
+            where p.retired_at is null and not p.starred
+              and v.sold_per_day is not null and v.sold_per_day < %s
+              and not exists (select 1 from tiktok_watch.shop_product_videos pv where pv.product_id = v.product_id
+                              and pv.source = 'feed' and pv.upload_time > now() - interval '7 days')
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+        if not rows:
+            return 0
+        ids = [r[0] for r in rows]
+        cur.executemany(
+            "update tiktok_watch.shop_products set retired_at = now(), retired_sold = coalesce(%s, last_sold),"
+            " thumb = null, gallery_at = null, gallery_count = null, video_count = null, video_views = null,"
+            " video_likes = null, videos_checked_at = null, other_shops = null, twin_shops = null where product_id = %s",
+            [(sold, pid) for pid, sold in rows],
+        )
+        for table in ("shop_product_images", "shop_product_videos", "product_snapshots"):
+            cur.execute(f"delete from tiktok_watch.{table} where product_id = any(%s)", (ids,))
+    conn.commit()
+    return len(ids)

@@ -95,7 +95,7 @@ def find_twins(products: list[dict]) -> dict[str, set[str]]:
 def run(conn, stats) -> None:
     with conn.cursor() as cur:
         cur.execute("select product_id, shop_name, seller_id, title, thumb from tiktok_watch.shop_products"
-                    " where last_seen > now() - interval '60 days'")
+                    " where last_seen > now() - interval '60 days' and retired_at is null")
         products = [{"product_id": r[0], "shop_name": r[1], "seller_id": r[2], "words": words(r[3]),
                      "hash": dhash(r[4], 16) if r[4] else None} for r in cur.fetchall()]
         twins = find_twins(products)

@@ -221,7 +221,7 @@
     brand: () => "Ismert márkák saját termékei, ezek nem dropshippelhetők. A többi listából kimaradnak.",
     new: () => "Az elmúlt 30 órában felfedezett termékek",
   };
-  const DEFAULTS = { fashion_min_price: 20, fashion_max_price: 70, fashion_fetches_per_category: 10, hot_video_days: 60, shop_min_price: 30, shop_max_price: 70, shop_min_revenue_day: 1000, shop_fetches_per_category: 3, shop_track_min_sold: 100 };
+  const DEFAULTS = { fashion_min_price: 20, fashion_max_price: 70, fashion_fetches_per_category: 10, hot_video_days: 60, shop_min_price: 30, shop_max_price: 70, shop_min_revenue_day: 1000, shop_fetches_per_category: 3, shop_track_min_sold: 100, retire_below_per_day: 3 };
   const setting = (k) => { const v = state.settings[k]; return v != null ? Number(v) : DEFAULTS[k]; };
   const DEFAULT_BRANDS = ["VEVOR","Merach","Anker","Soundcore","eufy","Ninja","Shark","SharkNinja","Dyson","Bissell","Hoover","iRobot","Roborock","Tineco","Keurig","Cuisinart","KitchenAid","Hamilton Beach","Instant Pot","Instant","COSORI","Chefman","BLACK+DECKER","DEWALT","Milwaukee","Makita","Ryobi","Bosch","Philips","Braun","Oral-B","Waterpik","Conair","Revlon","Remington","Wahl","Andis","BaBylissPRO","Laifen","Panasonic","Samsung","Apple","JBL","Sony","Bose","Beats","Logitech","Garmin","Fitbit","Coleman","YETI","Stanley","Hydro Flask","Owala","Lodge","OXO","Rubbermaid","Sunbeam","Igloo","Theragun","Therabody","Hyperice","RENPHO","Bowflex","Gorilla Grip","Amazon Basics","LEGO","Hasbro","Mattel","Nerf","Fisher-Price","Crayola","Furbo","PetSafe","Cricut","BlendJet","Medicube","Govee","TP-Link","Ring","Blink","Wyze","Ecovacs","Dreame","Xiaomi","Ugreen","Baseus","Belkin","OtterBox","Spigen","Casetify","Shokz","Soundpeats","Sterilite","Mueller","Gourmia","Bella","Dash","Bear","AquaSonic","Snow","Crest","Sol de Janeiro","CeraVe","Olaplex","T3","GHD"];
   const BRAND_AMBIGUOUS = new Set(["Dash", "Bear", "Snow", "Instant", "Ring", "Bella", "PINK", "Alo", "Express", "Garage", "Target", "Coach", "Guess"]);
@@ -843,6 +843,7 @@
     ["fashion_min_price", "Női ruha minimum ár ($)", 0, 10000, ""], ["fashion_max_price", "Női ruha maximum ár ($)", 1, 10000, ""],
     ["fashion_fetches_per_category", "Betöltés kategóriánként (női ruha)", 1, 30, "Több betöltés több terméket hoz, de tovább tart a futás."],
     ["hot_video_days", "„Aktuális nyerő”: videó legfeljebb ennyi napos", 7, 365, "Ennél frissebb videó kell ahhoz, hogy egy termék aktuális nyerő legyen."],
+    ["retire_below_per_day", "Kivezetés napi ennyi eladás alatt", 0, 1000, "Két mérés után kikerül a követésből (adataival együtt), ha napi ennél kevesebbet ad el. A csillagozottak maradnak. Ha újra fogyni kezd, magától visszakerül. 0 = kikapcsolva."],
     ["shop_track_min_sold", "Videók és galéria ennyi eladástól", 0, 1e9, "Ennél kevesebb eladásnál nem tölti le a termék videóit és képeit."],
     ["videos_per_hashtag", "Videó hashtagenként", 10, 1000, "A TikTok kb. 150–190 videó után megáll."], ["trending_count", "Trending videók száma", 0, 1000, ""],
     ["max_age_days", "Legfeljebb ennyi napos videó", 1, 30, ""], ["min_views", "Legalább ennyi nézés", 0, 1e9, ""],
@@ -880,6 +881,7 @@
         el("p", {}, "Minden reggel végignézi ezeket a TikTok Shop kategóriákat, és elmenti az ársávba eső termékeket. 6 óránként újraméri az eladásukat."),
         el("div", { class: "row" }, numField("shop_min_price"), numField("shop_max_price"), numField("shop_min_revenue_day")),
         el("div", { class: "row" }, numField("shop_fetches_per_category"), numField("shop_track_min_sold"), numField("hot_video_days")),
+        el("div", { class: "row" }, numField("retire_below_per_day")),
         tagEditor("cats", cats, "Kategóriák", "Zöld szám: hány ársávba eső terméket hozott az utolsó futásnál. Új kategóriát a TikTok Shop kategóriaoldal linkjével adhatsz hozzá.",
           "pl. shop.tiktok.com/us/c/fitness/835336", (x) => { const m = x.match(/(?:\/c\/)?([a-z0-9-]+)\/(\d{4,})/i); return m ? m[1].toLowerCase() + "/" + m[2] : null; },
           (c) => [catLabel(c), catStats[c] ? el("em", {}, catStats[c].in_range || 0) : null]),

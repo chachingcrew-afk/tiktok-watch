@@ -176,7 +176,9 @@ async def scan_categories(cfg, conn, proxies) -> set[str]:
                 STATS[prefix + "brand_skipped"] += 1
                 continue
             p["focus"] = g["focus"]
-            db.upsert_shop_product(conn, p)
+            if not db.upsert_shop_product(conn, p):
+                STATS[prefix + "retired_skipped"] += 1  # barely sells: stays out until it picks up
+                continue
             if p["sold"] is not None:
                 db.add_product_snapshot(conn, p["product_id"], p["sold"], p["price"], p["price"], "listing")
             STATS[prefix + "in_range"] += 1
@@ -245,6 +247,7 @@ async def main() -> None:
     try:
         seen = await scan_categories(cfg, conn, proxies)
         await refresh_missing(cfg, conn, proxies, seen)
+        STATS["retired"] += db.retire_slow(conn)
         try:
             await asyncio.to_thread(gallery.run, conn, cfg.shop_track_min_sold, proxies, STATS)
         except Exception as e:  # images are a convenience; never fail the scan because of them

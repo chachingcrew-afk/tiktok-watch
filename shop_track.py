@@ -32,6 +32,7 @@ async def main() -> None:
         todo = db.shop_products_6h(conn, cfg.shop_min_price, cfg.shop_max_price, LIMIT, cfg.fashion_min_price, cfg.fashion_max_price)
         shop.STATS["selected"] = len(todo)
         await shop.read_pages(conn, proxies, todo)
+        shop.STATS["retired"] += db.retire_slow(conn)
     except BaseException as e:
         db.finish_run(conn, run_id, False, {**shop.STATS, **netstats.summary()}, str(e))
         raise
