@@ -292,8 +292,10 @@ def products_without_gallery(conn, min_sold: int, limit: int) -> list[tuple[str,
 def save_gallery(conn, product_id: str, images: list[str]) -> None:
     with conn.cursor() as cur:
         cur.execute("delete from tiktok_watch.shop_product_images where product_id = %s", (product_id,))
-        for i, data in enumerate(images):
-            cur.execute("insert into tiktok_watch.shop_product_images (product_id, idx, data) values (%s,%s,%s)", (product_id, i, data))
+        for i, img in enumerate(images):
+            data, url = img if isinstance(img, tuple) else (img, None)
+            cur.execute("insert into tiktok_watch.shop_product_images (product_id, idx, data, url) values (%s,%s,%s,%s)",
+                        (product_id, i, data, url))
         cur.execute("update tiktok_watch.shop_products set gallery_at = now(), gallery_count = %s where product_id = %s",
                     (len(images), product_id))
 

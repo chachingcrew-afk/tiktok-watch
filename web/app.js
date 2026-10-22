@@ -149,7 +149,7 @@
   const P = { focus: null, seg: store.get("seg") || "all", sort: store.get("sort") || "revenue_per_day", q: "", cat: "", pmin: null, pmax: null, page: 0, sel: null };
   const V = { seg: "tracking", sort: "recent_views_per_hour", q: "" };
   const PAGE = 50;
-  const cache = { thumbs: {}, gallery: {}, videos: {}, hist: {}, reviews: {} };
+  const cache = { thumbs: {}, gallery: {}, galurls: {}, videos: {}, hist: {}, reviews: {} };
 
   async function startApp(session) {
     show("app");
@@ -512,6 +512,12 @@
   function closeDrawer() { P.sel = null; $("drawer").hidden = true; $("scrim").hidden = true; document.body.style.overflow = ""; renderTable(); }
   $("scrim").addEventListener("click", closeDrawer);
   document.addEventListener("keydown", (e) => {
+    if (LB.open) {
+      if (e.key === "Escape") closeLightbox();
+      if (e.key === "ArrowRight") stepLightbox(1);
+      if (e.key === "ArrowLeft") stepLightbox(-1);
+      return;
+    }
     if ($("drawer").hidden) return;
     if (e.key === "Escape") closeDrawer();
     if (e.key === "ArrowRight") stepGallery(1);
@@ -530,6 +536,7 @@
     if (!p) { closeDrawer(); return; }
     const id = p.product_id;
     if (p.gallery_count) ensure("gallery", id, async () => (await rpc("tr_gallery", { p_product_id: id }) || []).map(r => r.data));
+    if (p.gallery_count) ensure("galurls", id, () => rpc("tr_gallery_urls", { p_product_id: id }));
     ensure("hist", id, () => rpc("tr_sales_history", { p_product_id: id }));
     if (p.video_count || p.fresh_videos) ensure("videos", id, () => rpc("tr_product_videos", { p_product_id: id }));
     const orig = p.price_original && Number(p.price_original) > Number(p.price) ? Number(p.price_original) : null;
@@ -579,12 +586,49 @@
     if (st.added_total) parts.push(`${nf(st.added_total)} terméke került be a boltból`);
     return el("div", { class: "d-note" }, "Bolt: ", st.url ? el("a", { href: st.url, target: "_blank", rel: "noopener" }, (st.shop_name || "megnyitás") + " ↗") : (st.shop_name || ""), " · " + parts.join(" · "));
   }
+  // ---------- image viewer (click a picture to see it big) ----------
+  const big = (url) => url ? url.replace(/~tplv-([a-z0-9]+)-[a-z-]+(?::\d+:\d+)?\.(webp|jpeg|jpg|png|image)/, "~tplv-$1-resize-webp:1200:1200.webp") : null;
+  const LB = { open: false, list: [], i: 0, node: null };
+  function openLightbox(list, i) {
+    LB.list = list.filter(Boolean); LB.i = Math.min(Math.max(0, i || 0), LB.list.length - 1); LB.open = true;
+    if (!LB.list.length) return;
+    if (!LB.node) {
+      LB.node = el("div", { class: "lb", role: "dialog", "aria-modal": "true", "aria-label": "Kép nagyban", onclick: (e) => { if (e.target === LB.node || e.target.classList.contains("lb-stage")) closeLightbox(); } });
+      document.body.append(LB.node);
+    }
+    renderLightbox();
+  }
+  function renderLightbox() {
+    const item = LB.list[LB.i];
+    const img = el("img", { src: item.src, alt: "Kép nagyban" });
+    if (item.fallback) img.addEventListener("error", () => { if (img.src !== item.fallback) img.src = item.fallback; }, { once: true });
+    const many = LB.list.length > 1;
+    LB.node.replaceChildren(
+      el("div", { class: "lb-stage" }, img),
+      el("button", { type: "button", class: "lb-close", "aria-label": "Bezárás", onclick: closeLightbox }, "×"),
+      many ? el("button", { type: "button", class: "lb-nav prev", "aria-label": "Előző kép", onclick: () => stepLightbox(-1) }, "‹") : null,
+      many ? el("button", { type: "button", class: "lb-nav next", "aria-label": "Következő kép", onclick: () => stepLightbox(1) }, "›") : null,
+      many ? el("span", { class: "lb-count" }, `${LB.i + 1} / ${LB.list.length}`) : null);
+    LB.node.hidden = false;
+    LB.node.querySelector(".lb-close").focus();
+  }
+  function stepLightbox(d) { if (LB.list.length < 2) return; LB.i = (LB.i + d + LB.list.length) % LB.list.length; renderLightbox(); }
+  function closeLightbox() { LB.open = false; if (LB.node) LB.node.hidden = true; }
+  // full-size sources for the product gallery: the original link when we have it, else the stored copy
+  function gallerySources(p, shown) {
+    const urls = cache.galurls[p.product_id];
+    return shown.map((small, i) => {
+      const orig = Array.isArray(urls) && urls[i] ? urls[i] : (i === 0 && p.image ? p.image : null);
+      return { src: orig ? big(orig) : small, fallback: small };
+    });
+  }
   function galleryEl(p) {
     const imgs = cache.gallery[p.product_id];
     const list = Array.isArray(imgs) && imgs.length ? imgs.map(b => "data:image/webp;base64," + b) : (p.image ? [sized(p.image, 600)] : []);
     if (galIdx >= list.length) galIdx = 0;
     const main = el("div", { class: "gal-main" });
-    if (list.length) main.append(el("img", { src: list[galIdx], alt: p.title || "", referrerpolicy: "no-referrer" }));
+    if (list.length) main.append(el("img", { src: list[galIdx], alt: p.title || "", referrerpolicy: "no-referrer", class: "zoomable", title: "Kattints a nagyításhoz",
+      onclick: () => openLightbox(gallerySources(p, list), galIdx) }));
     else main.append("Nincs kép");
     if (list.length > 1) main.append(
       el("button", { type: "button", class: "gal-nav prev", "aria-label": "Előző kép", onclick: () => stepGallery(-1) }, "‹"),
@@ -754,15 +798,12 @@
         r.verified ? el("span", { class: "chip" }, "Igazolt vásárlás") : null,
         r.sku ? el("span", { class: "chip blue" }, r.sku) : null),
       r.text ? el("p", {}, r.text) : el("p", { class: "d-note" }, "(csak csillag, szöveg nélkül)"),
-      r.images && r.images.length ? el("div", { class: "rv-imgs" }, ...r.images.map(b => el("a", { href: "data:image/jpeg;base64," + b, target: "_blank", rel: "noopener", onclick: (e) => { e.preventDefault(); openImage("data:image/jpeg;base64," + b); } },
+      r.images && r.images.length ? el("div", { class: "rv-imgs" }, ...r.images.map((b, bi) => el("a", { href: "data:image/jpeg;base64," + b, title: "Kattints a nagyításhoz", onclick: (e) => { e.preventDefault(); openLightbox(r.images.map(x => ({ src: "data:image/jpeg;base64," + x })), bi); } },
         el("img", { src: "data:image/jpeg;base64," + b, alt: "Vásárlói fotó", loading: "lazy" })))) : null));
     const more = shown.length > RV.limit ? el("button", { type: "button", class: "btn wide", onclick: () => { RV.limit += 50; renderDrawer(); } }, `Még ${nf(Math.min(50, shown.length - RV.limit))} vélemény`) : null;
     return el("div", { class: "rv-wrap" }, dist, chips, chipNote, variants, filterNote, ...items, more);
   }
-  function openImage(src) {
-    const w = window.open("", "_blank");
-    if (w) { w.document.title = "Vásárlói fotó"; const i = w.document.createElement("img"); i.src = src; i.style.cssText = "max-width:100%;image-rendering:auto"; w.document.body.style.cssText = "margin:0;background:#111;display:grid;place-items:center;min-height:100vh"; w.document.body.append(i); }
-  }
+
 
   function videosSection(p) {
     const head = el("h3", {}, "Videók ehhez a termékhez", el("span", {}, (p.video_count ? `${nf(p.video_count)} videó · ${short(p.video_views)} nézés` : "") + (Number(p.fresh_videos) ? ` · ${nf(p.fresh_videos)} friss` : "")));

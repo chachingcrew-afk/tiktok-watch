@@ -146,7 +146,7 @@ def run(conn, min_sold: int, proxies: dict | None, stats) -> None:
         for u in gallery_urls(html)[:GALLERY_MAX]:
             data = fetch_image(sized(u, 320))
             if data:
-                imgs.append(b64(data))
+                imgs.append((b64(data), u))  # small copy to show, original link for full size
         return pid, imgs
 
     with ThreadPoolExecutor(WORKERS) as pool:
