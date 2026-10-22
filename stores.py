@@ -3,7 +3,7 @@
 Every day the stores of our good women's products are visited. A store page shows the store's total
 units sold and its best sellers (sorted by units sold). From two visits we know how much the whole
 store sells per day; if that is far more than the products we already follow from it, the rest of its
-best sellers are added to tracking (in the women's price band, no known brands). The usual rules
+best sellers are added to tracking ($30-70, 8000+ sold, no known brands). The usual rules
 apply to them afterwards: measured every 6 hours, retired if they barely sell.
 """
 from __future__ import annotations
@@ -24,7 +24,8 @@ log = logging.getLogger(__name__)
 
 MIN_PRODUCT_PER_DAY = 10     # visit the stores of women's products selling at least this much
 REVISIT_HOURS = 20
-MIN_PRODUCT_SOLD = 200       # a store product must have sold this many in total to be added
+MIN_PRODUCT_SOLD = 8000      # a store product must have sold this many in total to be added
+MIN_PRICE, MAX_PRICE = 30, 70  # and cost this much (USD)
 GAP_MIN_PER_DAY = 20         # explore again when the store sells this much more per day than we track ...
 GAP_SHARE = 0.3              # ... and at least this share of the store's daily sales
 CONCURRENCY = 6
@@ -116,7 +117,7 @@ async def run(cfg, conn, stats) -> None:
                 for p in parse_category_page(html):
                     if p["product_id"] in state["known"] or (p["sold"] or 0) < MIN_PRODUCT_SOLD:
                         continue
-                    if p["price"] is None or not (cfg.fashion_min_price <= p["price"] <= cfg.fashion_max_price):
+                    if p["price"] is None or not (MIN_PRICE <= p["price"] <= MAX_PRICE):
                         continue
                     if brand_of(p.get("title"), p.get("shop_name"), cfg.known_brands):
                         continue
