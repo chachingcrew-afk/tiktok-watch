@@ -372,3 +372,7 @@ svg { display: block; }
 .mz-add:hover { border-color: var(--ink); color: var(--ink); }
 @media (max-width: 640px) { .mine-prices { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .mine-sumwrap { display: grid; gap: 8px; }
+.mz-dl { position: absolute; bottom: 4px; right: 4px; width: 24px; height: 24px; border-radius: 6px; border: 0; background: rgba(255,255,255,.9); color: #111; font-size: 14px; line-height: 1; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+.mz-dl:hover { background: #fff; }
+.mz-head { display: inline-flex; gap: 10px; align-items: baseline; }
+.mz-head .link { font-size: 12.5px; }

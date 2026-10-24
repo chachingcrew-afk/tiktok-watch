@@ -1106,8 +1106,48 @@
       closeDrawer(); selectView("mine");
       MY.list = await rpc("tr_my_products") || []; renderMine();
       const m = MY.list.find(x => x.id === id); if (m) openMine(m);
-      banner("Felvéve a saját termékeid közé. Add hozzá a beszállítói linket, a képeket és az árakat.");
+      banner("Felvéve a saját termékeid közé. A termékképek átvétele folyamatban…");
+      importImages(id, p.product_id);
     } catch (e) { banner("Nem sikerült felvenni. " + errText(e), true); }
+  }
+  // the product's pictures from TikTok Shop: full size through the server, else the small copies we keep
+  async function importImages(mineId, productId) {
+    let added = 0;
+    try {
+      if (sb.functions && sb.functions.invoke) {
+        const { data, error } = await sb.functions.invoke("tr-import-images", { body: { my_product_id: mineId, product_id: productId } });
+        if (!error && data) added = Number(data.added) || 0;
+      }
+    } catch (_) { /* fall back below */ }
+    let small = false;
+    if (!added) {
+      try { added = Number(await rpc("tr_copy_gallery_to_mine", { mine: mineId, src: productId })) || 0; small = added > 0; } catch (_) {}
+    }
+    banner(added ? `${added} termékkép átvéve${small ? " (kisebb felbontásban)" : ""}.` : "A termékképeket nem sikerült átvenni, add hozzá őket kézzel.", !added);
+    loadMine(true);
+    if (MY.edit && MY.edit.id === mineId) {
+      try { MY.imgs = await rpc("tr_my_product_images", { pid: mineId }) || []; renderMineEditor(); } catch (_) {}
+    }
+  }
+  // downloads: one picture, or all of them in a ZIP
+  const slug = (t) => (t || "termek").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 50) || "termek";
+  const extOf = (mime) => mime === "image/webp" ? "webp" : mime === "image/png" ? "png" : "jpg";
+  const b64ToBlob = (b64, mime) => { const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return new Blob([a], { type: mime || "image/jpeg" }); };
+  function saveBlob(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a = el("a", { href: url, download: name }); document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
+  function imageName(m, img, i) { return `${slug(m.name)}-${img.kind === "size_chart" ? "merettabla" : "kep"}-${String(i + 1).padStart(2, "0")}.${extOf(img.mime)}`; }
+  async function downloadAll(kind) {
+    const m = MY.edit; if (!m) return;
+    const imgs = (MY.imgs || []).filter(x => !kind || x.kind === kind);
+    if (!imgs.length) return;
+    if (!window.JSZip) { imgs.forEach((img, i) => setTimeout(() => saveBlob(b64ToBlob(img.data, img.mime), imageName(m, img, i)), i * 400)); return; }
+    const zip = new JSZip();
+    const counters = {};
+    for (const img of imgs) { counters[img.kind] = (counters[img.kind] || 0) + 1; zip.file(imageName(m, img, counters[img.kind] - 1), img.data, { base64: true }); }
+    saveBlob(await zip.generateAsync({ type: "blob" }), `${slug(m.name)}-kepek.zip`);
   }
   // read the form into MY.edit
   function readMineForm() {
@@ -1175,11 +1215,13 @@
       ondragover: (e) => { e.preventDefault(); zone.classList.add("over"); }, ondragleave: () => zone.classList.remove("over"),
       ondrop: (e) => { e.preventDefault(); zone.classList.remove("over"); addMineImages(e.dataTransfer.files, kind); } },
       ...imgs.map((img, i) => el("div", { class: "mz-img" },
-        el("img", { src: "data:image/jpeg;base64," + (img.thumb || img.data), alt: "", title: "Kattints a nagyításhoz",
-          onclick: () => openLightbox(imgs.map(x => ({ src: "data:image/jpeg;base64," + x.data })), i) }),
-        el("button", { type: "button", class: "mz-del", "aria-label": "Kép törlése", onclick: () => removeMineImage(img) }, "×"))),
+        el("img", { src: `data:${img.mime || "image/jpeg"};base64,` + (img.thumb || img.data), alt: "", title: "Kattints a nagyításhoz",
+          onclick: () => openLightbox(imgs.map(x => ({ src: `data:${x.mime || "image/jpeg"};base64,` + x.data })), i) }),
+        el("button", { type: "button", class: "mz-dl", "aria-label": "Kép letöltése", title: "Letöltés", onclick: () => saveBlob(b64ToBlob(img.data, img.mime), imageName(MY.edit, img, i)) }, "⤓"),
+        el("button", { type: "button", class: "mz-del", "aria-label": "Kép törlése", title: "Törlés", onclick: () => removeMineImage(img) }, "×"))),
       el("button", { type: "button", class: "mz-add", onclick: () => input.click() }, el("span", {}, "+"), kind === "photo" ? "Képek" : "Kép"));
-    return el("div", { class: "d-sec" }, el("h3", {}, title, el("span", {}, imgs.length ? `${imgs.length} db` : "")), zone, input,
+    return el("div", { class: "d-sec" }, el("h3", {}, title, el("span", { class: "mz-head" }, imgs.length ? `${imgs.length} db` : "",
+        imgs.length ? el("button", { type: "button", class: "link", onclick: () => downloadAll(kind) }, imgs.length > 1 ? "Összes letöltése (ZIP)" : "Letöltés") : null)), zone, input,
       el("div", { class: "d-note" }, help));
   }
   function renderMineEditor() {
