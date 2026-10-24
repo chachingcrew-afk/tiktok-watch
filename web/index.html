@@ -72,6 +72,8 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7l8-4 8 4v10l-8 4-8-4z M4 7l8 4 8-4 M12 11v10"/></svg>Termékek</button>
       <button type="button" data-view="women" class="nav-item">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3l3 3 3-3 3 3-2 4v11H8V10L6 6z"/></svg>Női ruha</button>
+      <button type="button" data-view="mine" class="nav-item">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4z"/></svg>Saját termékek</button>
       <button type="button" data-view="videos" class="nav-item">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="13" height="14" rx="2"/><path d="M16 10l5-3v10l-5-3"/></svg>Videók</button>
       <button type="button" data-view="runs" class="nav-item">
@@ -192,6 +194,24 @@
     <section id="view-runs" class="view" hidden>
       <header class="page-head"><div><h1>Futások</h1><p class="sub">Az automatikus gyűjtések és mérések naplója. Kattints egy sorra a részletekért.</p></div></header>
       <div class="table-card"><div class="table-scroll" id="runs"></div></div>
+    </section>
+
+    <!-- MY PRODUCTS -->
+    <section id="view-mine" class="view" hidden>
+      <header class="page-head">
+        <div>
+          <h1>Saját termékek</h1>
+          <p class="sub">A kiválasztott termékeid egy helyen: linkek, képek, mérettáblázat, beszerzési és szállítási ár.</p>
+        </div>
+        <button type="button" class="btn primary" id="mine-new">+ Új termék</button>
+      </header>
+      <div class="toolbar">
+        <div class="tools">
+          <label class="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+            <input id="mine-q" type="search" placeholder="Keresés a saját termékeid között" aria-label="Keresés a saját termékeid között"></label>
+        </div>
+      </div>
+      <div class="mine-grid" id="mine-grid"></div>
     </section>
 
     <!-- SETTINGS -->

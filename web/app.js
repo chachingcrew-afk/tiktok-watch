@@ -50,7 +50,7 @@
     const b = $("banner"); clearTimeout(bannerTimer);
     if (!text) { b.hidden = true; return; }
     b.className = "banner" + (isErr ? " err" : "");
-    b.replaceChildren(el("span", {}, text), action ? el("button", { type: "button", class: "btn", onclick: () => { b.hidden = true; action.fn(); } }, action.label) : null);
+    b.replaceChildren(...[el("span", {}, text), action ? el("button", { type: "button", class: "btn", onclick: () => { b.hidden = true; action.fn(); } }, action.label) : null].filter(Boolean));
     b.hidden = false;
     if (!isErr || action) bannerTimer = setTimeout(() => { b.hidden = true; }, 9000);
   }
@@ -183,7 +183,7 @@
 
   // ---------- navigation ----------
   function selectView(v) {
-    if (!["products", "women", "videos", "runs", "settings"].includes(v)) v = "products";
+    if (!["products", "women", "mine", "videos", "runs", "settings"].includes(v)) v = "products";
     const focus = v === "women" ? "women" : null;
     if (focus !== P.focus) { P.focus = focus; P.page = 0; P.cat = ""; P.found = null; P.q = ""; $("q").value = ""; if (state.shop.length) { renderKpis(); renderSeg(); renderCats(); renderTypes(); renderTable(); } }
     $("products-title").textContent = focus ? "Női ruha" : "Termékek";
@@ -191,8 +191,9 @@
     for (const b of document.querySelectorAll(".nav-item")) {
       if (b.dataset.view === v) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
     }
-    for (const s of ["products", "videos", "runs", "settings"]) $("view-" + s).hidden = s !== (v === "women" ? "products" : v);
+    for (const s of ["products", "mine", "videos", "runs", "settings"]) $("view-" + s).hidden = s !== (v === "women" ? "products" : v);
     store.set("view", v);
+    if (v === "mine") loadMine();
   }
   for (const b of document.querySelectorAll(".nav-item")) b.addEventListener("click", () => selectView(b.dataset.view));
 
@@ -509,7 +510,7 @@
   // ---------- product drawer ----------
   let galIdx = 0;
   function openProduct(id) { P.sel = id; galIdx = 0; $("drawer").hidden = false; $("scrim").hidden = false; document.body.style.overflow = "hidden"; renderDrawer(); renderTable(); $("drawer").scrollTop = 0; }
-  function closeDrawer() { P.sel = null; $("drawer").hidden = true; $("scrim").hidden = true; document.body.style.overflow = ""; renderTable(); }
+  function closeDrawer() { if (typeof MY !== "undefined") MY.edit = null; P.sel = null; $("drawer").hidden = true; $("scrim").hidden = true; document.body.style.overflow = ""; renderTable(); }
   $("scrim").addEventListener("click", closeDrawer);
   document.addEventListener("keydown", (e) => {
     if (LB.open) {
@@ -557,6 +558,7 @@
             p.hidden ? el("button", { type: "button", class: "btn", onclick: () => setProductHidden(p, false) }, "Visszaállítás")
                      : el("button", { type: "button", class: "btn danger", onclick: () => setProductHidden(p, true) }, "Elrejtés"),
             p.url ? el("a", { class: "btn", href: p.url, target: "_blank", rel: "noopener" }, "TikTok Shop ↗") : null,
+            el("button", { type: "button", class: "btn", title: "Felveszi a Saját termékek közé, ott adhatod hozzá a beszállítói linket, képeket és árakat", onclick: () => addToMine(p) }, "+ Saját termékeim közé"),
             p.image ? el("a", { class: "btn", href: "https://lens.google.com/uploadbyurl?url=" + encodeURIComponent(p.image), target: "_blank", rel: "noopener", title: "Képkeresés: kik árulják még, például AliExpressen" }, "Hol árulják még? ↗") : null),
           storeNote(p),
           brand ? el("div", { class: "d-note" }, `Ismert márka (${brand}): saját tervezésű és gyártású termék, nem dropshippelhető.`) : null,
@@ -1037,6 +1039,204 @@
       brandCache = new WeakMap(); renderKpis(); renderSeg(); renderCats(); renderTypes(); renderTable();
     } catch (err) { note.textContent = errText(err); }
     finally { $("save").disabled = false; $("save").textContent = "Beállítások mentése"; }
+  });
+
+
+  // ---------- my products ("Saját termékek") ----------
+  const MY = { list: null, loading: false, edit: null, imgs: null, busy: 0, pasteKind: "photo", note: "" };
+  const CUR = { USD: "$", CNY: "¥", EUR: "€" };
+  const curFmt = (n, c) => n == null || n === "" || isNaN(n) ? "–" : (CUR[c] || "") + Number(n).toLocaleString("hu-HU", { maximumFractionDigits: 2 });
+  async function loadMine(force) {
+    if (MY.loading || (MY.list && !force)) { renderMine(); return; }
+    MY.loading = true; renderMine();
+    try { MY.list = await rpc("tr_my_products") || []; }
+    catch (e) { MY.list = MY.list || []; banner("Nem sikerült betölteni a saját termékeidet. " + errText(e), true); }
+    finally { MY.loading = false; renderMine(); }
+  }
+  const linkChips = (m) => [["tiktok_url", "TikTok"], ["ali_url", "AliExpress"], ["url_1688", "1688"], ["other_url", "Egyéb"]]
+    .filter(([k]) => m[k]).map(([k, l]) => el("a", { class: "chip blue", href: m[k], target: "_blank", rel: "noopener", onclick: (e) => e.stopPropagation() }, l + " ↗"));
+  function costLine(m) {
+    const u = m.unit_price != null && m.unit_price !== "" ? Number(m.unit_price) : null, sh = m.shipping_price != null && m.shipping_price !== "" ? Number(m.shipping_price) : null;
+    if (u == null && sh == null) return null;
+    return (u || 0) + (sh || 0);
+  }
+  function renderMine() {
+    const box = $("mine-grid"); if (!box) return;
+    if (MY.loading && !MY.list) { box.replaceChildren(el("div", { class: "empty" }, "Betöltés…")); return; }
+    const q = ($("mine-q").value || "").trim().toLowerCase();
+    const list = (MY.list || []).filter(m => !q || [m.name, m.notes, m.tiktok_url, m.ali_url, m.url_1688].some(x => (x || "").toLowerCase().includes(q)));
+    if (!list.length) {
+      box.replaceChildren(el("div", { class: "mine-empty" },
+        el("b", {}, (MY.list || []).length ? "Nincs találat." : "Még nincs saját terméked."),
+        el("span", {}, "Az „+ Új termék” gombbal adhatsz hozzá egyet, vagy a Termékradarban egy termék adatlapján a „+ Saját termékeim közé” gombbal.")));
+      return;
+    }
+    box.replaceChildren(...list.map(m => {
+      const cost = costLine(m);
+      const margin = m.sale_price && cost != null && m.currency === "USD" ? Number(m.sale_price) - cost : null;
+      return el("button", { type: "button", class: "mine-card", onclick: () => openMine(m) },
+        el("div", { class: "mine-thumb" }, m.thumb ? el("img", { src: "data:image/jpeg;base64," + m.thumb, alt: "" }) : "Nincs kép"),
+        el("div", { class: "mine-body" },
+          el("b", {}, m.name || "Névtelen termék"),
+          el("div", { class: "mine-cost" },
+            cost != null ? el("span", {}, "Bekerülés: ", el("strong", {}, curFmt(cost, m.currency)), "/db") : el("span", { class: "muted" }, "Nincs még ár"),
+            margin != null ? el("span", { class: margin > 0 ? "pos" : "neg" }, `Haszon: ${curFmt(margin, "USD")}/db`) : null),
+          el("div", { class: "mine-links" }, ...linkChips(m),
+            m.photos ? el("span", { class: "chip" }, `${m.photos} kép`) : null,
+            m.size_charts ? el("span", { class: "chip" }, "Mérettábla") : null)));
+    }));
+  }
+  $("mine-q").addEventListener("input", renderMine);
+  $("mine-new").addEventListener("click", () => openMine(null));
+
+  function openMine(m) {
+    MY.edit = m ? Object.assign({}, m) : { id: null, name: "", currency: "USD" };
+    MY.imgs = m ? null : [];
+    MY.note = "";
+    P.sel = null;
+    $("drawer").hidden = false; $("scrim").hidden = false; document.body.style.overflow = "hidden";
+    renderMineEditor(); $("drawer").scrollTop = 0;
+    if (m) rpc("tr_my_product_images", { pid: m.id }).then(r => { if (MY.edit && MY.edit.id === m.id) { MY.imgs = r || []; renderMineEditor(); } })
+      .catch(e => { MY.imgs = []; MY.note = "A képeket nem sikerült betölteni. " + errText(e); renderMineEditor(); });
+  }
+  function closeMine() { MY.edit = null; $("drawer").hidden = true; $("scrim").hidden = true; document.body.style.overflow = ""; }
+  async function addToMine(p) {
+    try {
+      const id = await rpc("tr_save_my_product", { p: { name: p.title || "", tiktok_url: (p.url || "").split("?")[0] || null, source_product_id: p.product_id, currency: "USD", sale_price: p.price } });
+      closeDrawer(); selectView("mine");
+      MY.list = await rpc("tr_my_products") || []; renderMine();
+      const m = MY.list.find(x => x.id === id); if (m) openMine(m);
+      banner("Felvéve a saját termékeid közé. Add hozzá a beszállítói linket, a képeket és az árakat.");
+    } catch (e) { banner("Nem sikerült felvenni. " + errText(e), true); }
+  }
+  // read the form into MY.edit
+  function readMineForm() {
+    const v = (id) => { const n = document.getElementById(id); return n ? n.value.trim() : ""; };
+    Object.assign(MY.edit, { name: v("m-name"), tiktok_url: v("m-tiktok"), ali_url: v("m-ali"), url_1688: v("m-1688"), other_url: v("m-other"),
+      currency: v("m-cur") || "USD", unit_price: v("m-unit").replace(",", "."), shipping_price: v("m-ship").replace(",", "."), sale_price: v("m-sale").replace(",", "."), notes: v("m-notes") });
+  }
+  async function saveMine(quiet) {
+    readMineForm();
+    for (const k of ["unit_price", "shipping_price", "sale_price"]) if (MY.edit[k] !== "" && isNaN(Number(MY.edit[k]))) { MY.note = "Az árakhoz számot írj, pl. 4.50"; renderMineEditor(); return null; }
+    MY.busy++; if (!quiet) { MY.note = "Mentés…"; renderMineEditor(); }
+    try {
+      const id = await rpc("tr_save_my_product", { p: MY.edit });
+      MY.edit.id = id;
+      MY.note = quiet ? MY.note : "Mentve.";
+      loadMine(true);
+      return id;
+    } catch (e) { MY.note = "Nem sikerült menteni. " + errText(e); return null; }
+    finally { MY.busy--; renderMineEditor(); }
+  }
+  // pictures: resized in the browser (JPEG), then stored
+  function loadBitmap(file) {
+    if (window.createImageBitmap) return createImageBitmap(file);
+    return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(file); });
+  }
+  async function toJpeg(file, max, q) {
+    const bmp = await loadBitmap(file);
+    const w = bmp.width || bmp.naturalWidth, h = bmp.height || bmp.naturalHeight;
+    const s = Math.min(1, max / Math.max(w, h));
+    const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(w * s)); c.height = Math.max(1, Math.round(h * s));
+    const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.drawImage(bmp, 0, 0, c.width, c.height);
+    return c.toDataURL("image/jpeg", q).split(",")[1];
+  }
+  async function addMineImages(files, kind) {
+    files = [...files].filter(f => f && f.type && f.type.startsWith("image/"));
+    if (!files.length || !MY.edit) return;
+    if (!MY.edit.id) { if (!MY.edit.name) { const n = document.getElementById("m-name"); MY.edit.name = n && n.value.trim() ? n.value.trim() : "Új termék"; } if (!(await saveMine(true))) return; }
+    const pid = MY.edit.id;
+    MY.busy++; MY.note = `Képek feltöltése (${files.length})…`; renderMineEditor();
+    let ok = 0;
+    for (const f of files) {
+      try {
+        const data = await toJpeg(f, kind === "size_chart" ? 1800 : 1400, 0.82), thumb = await toJpeg(f, 240, 0.7);
+        const id = await rpc("tr_add_my_image", { pid, kind, data, thumb });
+        if (MY.edit && MY.edit.id === pid) { (MY.imgs = MY.imgs || []).push({ id, kind, idx: 999, data, thumb }); ok++; renderMineEditor(); }
+      } catch (e) { MY.note = "Egy képet nem sikerült feltölteni. " + errText(e); }
+    }
+    MY.busy--; if (ok) MY.note = `${ok} kép hozzáadva.`; renderMineEditor(); loadMine(true);
+  }
+  async function removeMineImage(img) {
+    try { await rpc("tr_remove_my_image", { iid: img.id }); MY.imgs = MY.imgs.filter(x => x !== img); renderMineEditor(); loadMine(true); }
+    catch (e) { MY.note = "Nem sikerült törölni. " + errText(e); renderMineEditor(); }
+  }
+  async function removeMine() {
+    if (!MY.edit || !MY.edit.id) { closeMine(); return; }
+    if (!MY.confirmDel) { MY.confirmDel = true; MY.note = "Biztosan törlöd? Kattints még egyszer a Törlés gombra."; renderMineEditor(); setTimeout(() => { MY.confirmDel = false; }, 6000); return; }
+    MY.confirmDel = false;
+    try { await rpc("tr_remove_my_product", { pid: MY.edit.id }); closeMine(); loadMine(true); banner("Törölve."); }
+    catch (e) { MY.note = "Nem sikerült törölni. " + errText(e); renderMineEditor(); }
+  }
+  function imageZone(kind, title, help) {
+    const imgs = (MY.imgs || []).filter(x => x.kind === kind);
+    const input = el("input", { type: "file", accept: "image/*", multiple: kind === "photo" ? true : null, hidden: true, onchange: (e) => { addMineImages(e.target.files, kind); e.target.value = ""; } });
+    const zone = el("div", { class: "mz", tabindex: "0", onmouseenter: () => { MY.pasteKind = kind; }, onfocus: () => { MY.pasteKind = kind; },
+      ondragover: (e) => { e.preventDefault(); zone.classList.add("over"); }, ondragleave: () => zone.classList.remove("over"),
+      ondrop: (e) => { e.preventDefault(); zone.classList.remove("over"); addMineImages(e.dataTransfer.files, kind); } },
+      ...imgs.map((img, i) => el("div", { class: "mz-img" },
+        el("img", { src: "data:image/jpeg;base64," + (img.thumb || img.data), alt: "", title: "Kattints a nagyításhoz",
+          onclick: () => openLightbox(imgs.map(x => ({ src: "data:image/jpeg;base64," + x.data })), i) }),
+        el("button", { type: "button", class: "mz-del", "aria-label": "Kép törlése", onclick: () => removeMineImage(img) }, "×"))),
+      el("button", { type: "button", class: "mz-add", onclick: () => input.click() }, el("span", {}, "+"), kind === "photo" ? "Képek" : "Kép"));
+    return el("div", { class: "d-sec" }, el("h3", {}, title, el("span", {}, imgs.length ? `${imgs.length} db` : "")), zone, input,
+      el("div", { class: "d-note" }, help));
+  }
+  function renderMineEditor() {
+    const m = MY.edit, d = $("drawer");
+    if (!m) return;
+    const field = (id, label, value, attrs) => el("div", { class: "field" }, el("label", { for: id }, label), el("input", Object.assign({ id, value: value ?? "", autocomplete: "off" }, attrs || {})));
+    const linkField = (id, label, value, ph) => el("div", { class: "field" }, el("label", { for: id }, label),
+      el("div", { class: "mlink" }, el("input", { id, type: "url", value: value || "", placeholder: ph, autocomplete: "off" }),
+        value ? el("a", { class: "btn", href: value, target: "_blank", rel: "noopener" }, "Megnyitás ↗") : null));
+    const cur = m.currency || "USD";
+    d.replaceChildren(
+      el("div", { class: "d-top" }, el("span", { class: "crumbs" }, "Saját termék" + (m.created_at ? " · felvéve " + new Date(m.created_at).toLocaleDateString("hu-HU") : "")),
+        el("button", { type: "button", class: "icon-btn", "aria-label": "Bezárás", onclick: closeMine }, "×")),
+      el("form", { class: "mine-form", novalidate: true, onsubmit: (e) => { e.preventDefault(); saveMine(false); } },
+        el("div", { class: "d-sec" },
+          field("m-name", "Termék neve", m.name, { placeholder: "pl. Fleece-lined winter tights" }),
+          linkField("m-tiktok", "TikTok Shop link", m.tiktok_url, "https://shop.tiktok.com/us/pdp/…"),
+          linkField("m-ali", "AliExpress link", m.ali_url, "https://www.aliexpress.com/item/…"),
+          linkField("m-1688", "1688.com link", m.url_1688, "https://detail.1688.com/offer/…"),
+          linkField("m-other", "Egyéb beszállító (CJ, stb.)", m.other_url, "https://…")),
+        el("div", { class: "d-sec" }, el("h3", {}, "Árak", el("span", {}, "darabonként")),
+          el("div", { class: "mine-prices" },
+            el("div", { class: "field" }, el("label", { for: "m-cur" }, "Pénznem"),
+              el("select", { id: "m-cur" }, ...["USD", "CNY", "EUR"].map(c => el("option", { value: c, selected: c === cur ? "" : null }, c + " (" + CUR[c] + ")")))),
+            field("m-unit", "Egységár (unit price)", m.unit_price, { inputmode: "decimal", placeholder: "0.00" }),
+            field("m-ship", "Szállítás / db", m.shipping_price, { inputmode: "decimal", placeholder: "0.00" }),
+            field("m-sale", "Eladási ár (USD)", m.sale_price, { inputmode: "decimal", placeholder: "0.00" })),
+          mineSum(m)),
+        el("div", { class: "d-sec" }, el("div", { class: "field" }, el("label", { for: "m-notes" }, "Jegyzet"),
+          el("textarea", { id: "m-notes", rows: "3", placeholder: "pl. MOQ, szállítási idő, színek, beszállító neve" }, m.notes || ""))),
+        el("div", { class: "mine-save" },
+          el("button", { type: "submit", class: "btn primary", disabled: MY.busy ? "" : null }, MY.edit.id ? "Mentés" : "Létrehozás"),
+          el("span", { class: "d-note", role: "status" }, MY.note || ""),
+          m.id ? el("button", { type: "button", class: "btn danger", onclick: removeMine }, "Törlés") : null)),
+      ...(MY.imgs == null ? [el("div", { class: "d-sec" }, el("div", { class: "d-note" }, "Képek betöltése…"))] : [
+        imageZone("photo", "Termékképek", "Húzd ide a képeket, kattints a „+ Képek” gombra, vagy másold be (Ctrl+V). A képeket a böngésző kicsinyíti, mielőtt elmenti."),
+        imageZone("size_chart", "Mérettábla", "A beszállító mérettáblázata képként. Ide is húzhatod, vagy bemásolhatod, ha az egér a mező fölött van.")]));
+    // keep the numbers in the summary live while typing
+    for (const id of ["m-cur", "m-unit", "m-ship", "m-sale"])
+      document.getElementById(id).addEventListener("input", () => { readMineForm(); const old = d.querySelector(".mine-sumwrap"); if (old) old.replaceWith(mineSum(MY.edit)); });
+  }
+  function mineSum(m) {
+    const cur = m.currency || "USD", cost = costLine(m);
+    const sale = m.sale_price !== "" && m.sale_price != null && !isNaN(m.sale_price) ? Number(m.sale_price) : null;
+    const margin = sale != null && cost != null && cur === "USD" ? sale - cost : null;
+    return el("div", { class: "mine-sumwrap" },
+      el("div", { class: "mine-sum" },
+        el("div", {}, el("span", {}, "Bekerülési költség / db"), el("b", {}, cost != null && !isNaN(cost) ? curFmt(cost, cur) : "–")),
+        el("div", {}, el("span", {}, "Haszon / db"), el("b", { class: margin == null ? "" : margin > 0 ? "pos" : "neg" }, margin != null && !isNaN(margin) ? curFmt(margin, "USD") : "–")),
+        el("div", {}, el("span", {}, "Árrés"), el("b", {}, margin != null && sale ? Math.round(margin / sale * 100) + "%" : "–"))),
+      cur !== "USD" && sale != null ? el("div", { class: "d-note" }, "A haszon számításához a beszerzési árat is USD-ben add meg (vagy írd át a pénznemet).") : null);
+  }
+  document.addEventListener("paste", (e) => {
+    if (!MY.edit || $("drawer").hidden) return;
+    const files = [...(e.clipboardData ? e.clipboardData.files : [])].filter(f => f.type.startsWith("image/"));
+    if (!files.length) return;
+    e.preventDefault(); addMineImages(files, MY.pasteKind);
   });
 
   boot();
