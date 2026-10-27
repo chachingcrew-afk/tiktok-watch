@@ -1050,7 +1050,7 @@
     if (!(sb.functions && sb.functions.invoke)) { VL.err = "Ez a keresés csak a weboldalon (Netlify) működik, a csevegésben lévő változatban nem."; VL.res = null; renderVlink(); return; }
     VL.busy = true; VL.err = ""; VL.res = null; renderVlink();
     try {
-      const { data, error } = await sb.functions.invoke("tr-video-products", { body: { url } });
+      const { data, error } = await sb.functions.invoke("tr-video-products", { body: { url }, region: "us-east-1" });  // TikTok shows the shop links only to US visitors
       if (error) {
         let msg = error.message || "ismeretlen hiba";
         try { const b = await error.context.json(); if (b && b.error) msg = b.error; } catch (_) {}
@@ -1178,7 +1178,7 @@
     let added = 0;
     try {
       if (sb.functions && sb.functions.invoke) {
-        const { data, error } = await sb.functions.invoke("tr-import-images", { body: { my_product_id: mineId, product_id: productId } });
+        const { data, error } = await sb.functions.invoke("tr-import-images", { body: { my_product_id: mineId, product_id: productId }, region: "us-east-1" });
         if (!error && data) added = Number(data.added) || 0;
       }
     } catch (_) { /* fall back below */ }
