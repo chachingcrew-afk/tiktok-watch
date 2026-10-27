@@ -1,6 +1,7 @@
-// "Videó link -> termék": which TikTok Shop products (and stores) are linked to a TikTok video.
-// Called by the web app with the signed-in owner's token. Reads the public video page from the
-// server (the TikTok app hides the shopping cart outside the US), then starts tracking the products.
+// "Videó / termék link": which TikTok Shop products (and stores) are linked to a TikTok video, or what
+// a TikTok Shop product link is. Called by the web app with the signed-in owner's token, in the US
+// region (TikTok hides the shop links from European visitors). Read only: adding a product to the
+// watch list is a separate call from the page (tr_watch_products).
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -40,22 +41,38 @@ function productsFrom(item: any) {
   return out;
 }
 
-// the store behind a product, from its product page
-async function storeOf(productId: string) {
+// a product page: name, picture, price, units sold, and the store behind it
+async function productPage(productId: string) {
   try {
     const r = await get(`https://shop.tiktok.com/us/pdp/x/${productId}`);
     if (!r.ok) return null;
-    const t = (await r.text()).replace(/\\\\\\"/g, '"').replace(/\\"/g, '"');
+    const raw = await r.text();
+    const t = raw.replace(/\\\\\\"/g, '"').replace(/\\"/g, '"');
+    const meta = (prop: string) => { const m = raw.match(new RegExp(`<meta[^>]+property="${prop}"[^>]+content="([^"]*)"`)) || raw.match(new RegExp(`<meta[^>]+content="([^"]*)"[^>]+property="${prop}"`)); return m ? m[1] : null; };
+    const unent = (x: string | null) => x ? x.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">") : x;
+    const out: any = { product_id: productId };
+    let title = unent(meta("og:title"));
+    if (!title) { const m = raw.match(/<title>([^<]*)<\/title>/); title = m ? unent(m[1]) : null; }
+    out.title = title ? title.replace(/\s*-\s*TikTok Shop\s*$/i, "").trim() : null;
+    out.image = unent(meta("og:image"));
+    const pm = t.match(/"min_sku_price":\s*"([\d.,]+)"/);
+    out.price = pm ? Number(pm[1].replace(/,/g, "")) : null;
+    let sm = t.match(new RegExp(`"sold_count":\\s*"?(\\d+)"?,\\s*"product_id":\\s*"${productId}"`));
+    if (!sm) { const st = t.indexOf('"product_info":'); if (st >= 0) sm = t.slice(st, st + 3000).match(/"sold_count":\s*"?(\d+)/); }
+    out.sold_now = sm ? Number(sm[1]) : null;
+    const cats = [...new Set([...t.matchAll(/"category_name":"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]))].slice(0, 3);
+    out.category = cats.length ? cats.join(" › ") : null;
+    out.url = `https://shop.tiktok.com/us/pdp/x/${productId}`;
     const i = t.indexOf('"shop_info":{');
-    if (i < 0) return null;
-    const chunk = t.slice(i, i + 4000);
-    const f = (re: RegExp) => { const m = chunk.match(re); return m ? m[1] : null; };
-    return {
-      shop_name: f(/"shop_name":"((?:[^"\\]|\\.)*)"/),
-      seller_id: f(/"seller_id":"?(\d+)/),
-      store_sold: Number(f(/"sold_count":"?(\d+)/)) || null,
-      store_url: (f(/"shop_link":"([^"]+)"/) || "").replace(/\\u002F/g, "/") || null,
-    };
+    if (i >= 0) {
+      const chunk = t.slice(i, i + 4000);
+      const f = (re: RegExp) => { const m = chunk.match(re); return m ? m[1] : null; };
+      out.shop_name = f(/"shop_name":"((?:[^"\\]|\\.)*)"/);
+      out.seller_id = f(/"seller_id":"?(\d+)/);
+      out.store_sold = Number(f(/"sold_count":"?(\d+)/)) || null;
+      out.store_url = (f(/"shop_link":"([^"]+)"/) || "").replace(/\\u002F/g, "/") || null;
+    }
+    return out;
   } catch (_) { return null; }
 }
 
@@ -78,12 +95,35 @@ Deno.serve(async (req) => {
   try { host = new URL(link).hostname; } catch (_) { return json({ error: "Ez nem TikTok videó link." }, 400); }
   if (!/(^|\.)tiktok\.com$/.test(host)) return json({ error: "Ez nem TikTok videó link." }, 400);
 
-  // short links (vm.tiktok.com, vt.tiktok.com, tiktok.com/t/...) redirect to the real video page
-  let videoId = (link.match(/\/(?:video|photo)\/(\d{15,25})/) || [])[1] || null;
-  if (!videoId) {
-    try { const r = await get(link); videoId = (r.url.match(/\/(?:video|photo)\/(\d{15,25})/) || [])[1] || null; await r.body?.cancel(); } catch (_) { /* below */ }
+  // short links (vm.tiktok.com, vt.tiktok.com, tiktok.com/t/...) redirect to the real page
+  const VIDEO = /\/(?:video|photo)\/(\d{15,25})/;
+  const PRODUCT = /(?:\/pdp\/(?:[^/?#]+\/)?|\/view\/product\/|\/product\/)(\d{15,25})/;
+  let videoId = (link.match(VIDEO) || [])[1] || null;
+  let productId = videoId ? null : (link.match(PRODUCT) || [])[1] || null;
+  if (!videoId && !productId) {
+    try {
+      const r = await get(link);
+      videoId = (r.url.match(VIDEO) || [])[1] || null;
+      productId = videoId ? null : (r.url.match(PRODUCT) || [])[1] || null;
+      await r.body?.cancel();
+    } catch (_) { /* below */ }
   }
-  if (!videoId) return json({ error: "Nem találtam videót ezen a linken." }, 400);
+  if (!videoId && !productId) return json({ error: "Ezen a linken nem találtam TikTok videót vagy TikTok Shop terméket." }, 400);
+
+  // what we already know about these products (no changes here: adding to tracking is a separate click)
+  const known = async (ids: string[]) => {
+    if (!ids.length) return new Map();
+    const r = await rpc("tr_products_info", { ids });
+    const rows: any[] = r.ok ? await r.json() : [];
+    return new Map(rows.map((x) => [x.product_id, x]));
+  };
+
+  if (productId) {
+    const [page, db] = await Promise.all([productPage(productId), known([productId])]);
+    const k = db.get(productId);
+    if (!page && !k) return json({ error: "A termékoldal most nem érhető el. Próbáld újra pár perc múlva." }, 502);
+    return json({ kind: "product", products: [{ ...(page || {}), ...(k ? Object.fromEntries(Object.entries(k).filter(([, v]) => v !== null)) : {}), known: !!k }] });
+  }
 
   let item: any = null;
   for (let a = 0; a < 2 && !item; a++) {
@@ -102,20 +142,16 @@ Deno.serve(async (req) => {
   if (!item) return json({ error: "A TikTok most nem adta ki a videó adatait. Próbáld újra pár perc múlva." }, 502);
 
   const products = productsFrom(item);
-  // store names for products we do not know the store of yet (product pages, at most 6)
+  const db = await known(products.map((p) => p.product_id));
+  // store and sales for products we do not know yet (product pages, at most 6)
   await Promise.all(products.slice(0, 6).map(async (p) => {
-    if (p.shop_name) return;
-    const s = await storeOf(p.product_id);
-    if (s) { p.shop_name = s.shop_name || p.shop_name; p.seller_id = p.seller_id || s.seller_id; p.store_sold = s.store_sold; p.store_url = s.store_url; }
+    if (db.has(p.product_id)) return;
+    const s = await productPage(p.product_id);
+    if (s) for (const key of ["shop_name", "seller_id", "store_sold", "store_url", "sold_now", "price", "image"]) if (p[key] == null && s[key] != null) p[key] = s[key];
   }));
-  let tracked: any[] = [];
-  if (products.length) {
-    const r = await rpc("tr_track_products", { products });
-    if (r.ok) tracked = await r.json();
-  }
-  const extra = new Map(products.map((p) => [p.product_id, p]));
   const stats = item.statsV2 || item.stats || {};
   return json({
+    kind: "video",
     video: {
       id: videoId,
       author: item.author?.uniqueId || null,
@@ -127,7 +163,9 @@ Deno.serve(async (req) => {
       cover: item.video?.cover || item.video?.originCover || null,
       url: `https://www.tiktok.com/@${item.author?.uniqueId || "_"}/video/${videoId}`,
     },
-    products: tracked.map((t: any) => ({ ...t, store_sold: t.store_sold ?? extra.get(t.product_id)?.store_sold ?? null,
-      store_url: t.store_url ?? extra.get(t.product_id)?.store_url ?? null })),
+    products: products.map((p) => {
+      const k = db.get(p.product_id);
+      return { ...p, ...(k ? Object.fromEntries(Object.entries(k).filter(([, v]) => v !== null)) : {}), known: !!k };
+    }),
   });
 });
