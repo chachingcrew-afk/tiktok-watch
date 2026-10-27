@@ -103,6 +103,13 @@
         <button type="button" class="btn" id="refresh">Frissítés</button>
       </header>
 
+      <form class="vlink" id="vlink-form" novalidate>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>
+        <input id="vlink" type="url" inputmode="url" autocomplete="off" placeholder="TikTok videó link: melyik termék és melyik bolt van benne?" aria-label="TikTok videó link">
+        <button type="submit" class="btn primary" id="vlink-btn">Keresés</button>
+      </form>
+      <div class="vlink-res" id="vlink-res" hidden></div>
+
       <div class="kpis" id="kpis"></div>
 
       <div class="toolbar">

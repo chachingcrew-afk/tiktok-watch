@@ -1042,6 +1042,69 @@
   });
 
 
+
+  // ---------- "Videó link -> termék" ----------
+  const VL = { busy: false, res: null, err: "" };
+  async function lookupVideo(url) {
+    if (!url) return;
+    if (!(sb.functions && sb.functions.invoke)) { VL.err = "Ez a keresés csak a weboldalon (Netlify) működik, a csevegésben lévő változatban nem."; VL.res = null; renderVlink(); return; }
+    VL.busy = true; VL.err = ""; VL.res = null; renderVlink();
+    try {
+      const { data, error } = await sb.functions.invoke("tr-video-products", { body: { url } });
+      if (error) {
+        let msg = error.message || "ismeretlen hiba";
+        try { const b = await error.context.json(); if (b && b.error) msg = b.error; } catch (_) {}
+        throw new Error(msg);
+      }
+      VL.res = data;
+    } catch (e) { VL.err = "Nem sikerült: " + (e.message || e); }
+    finally { VL.busy = false; renderVlink(); }
+  }
+  function renderVlink() {
+    const box = $("vlink-res"), btn = $("vlink-btn");
+    btn.disabled = VL.busy; btn.textContent = VL.busy ? "Keresés…" : "Keresés";
+    if (VL.busy) { box.hidden = false; box.replaceChildren(el("div", { class: "d-note" }, "A videó adatainak lekérése a TikTokról, pár másodperc…")); return; }
+    if (VL.err) { box.hidden = false; box.replaceChildren(el("div", { class: "vl-err" }, VL.err), el("button", { type: "button", class: "link", onclick: () => { VL.err = ""; box.hidden = true; } }, "Bezárás")); return; }
+    if (!VL.res) { box.hidden = true; return; }
+    const v = VL.res.video || {}, prods = VL.res.products || [];
+    box.hidden = false;
+    box.replaceChildren(
+      el("div", { class: "vl-head" },
+        el("div", {}, el("b", {}, v.author ? "@" + v.author : "Videó"),
+          el("span", {}, [v.views != null ? short(v.views) + " nézés" : null, v.likes != null ? short(v.likes) + " like" : null,
+            v.created ? ago(new Date(v.created * 1000).toISOString()) : null].filter(Boolean).join(" · ")),
+          v.desc ? el("p", {}, v.desc.slice(0, 220)) : null),
+        el("div", { class: "vl-actions" },
+          v.url ? el("a", { class: "btn", href: v.url, target: "_blank", rel: "noopener" }, "Videó ↗") : null,
+          el("button", { type: "button", class: "icon-btn", "aria-label": "Bezárás", onclick: () => { VL.res = null; renderVlink(); } }, "×"))),
+      prods.length ? el("div", { class: "vl-list" }, ...prods.map(p => {
+        const known = state.shop.find(x => x.product_id === p.product_id);
+        return el("div", { class: "vl-item" },
+          el("div", { class: "vl-img" }, p.image ? el("img", { src: sized(p.image, 160) || p.image, alt: "", referrerpolicy: "no-referrer", class: "zoomable",
+            onclick: () => openLightbox([{ src: big(p.image) || p.image, fallback: p.image }], 0) }) : "▢"),
+          el("div", { class: "vl-info" },
+            el("b", {}, p.title || "Névtelen termék"),
+            el("div", { class: "vl-meta" },
+              p.price != null ? el("span", {}, usd(p.price)) : null,
+              p.sold_now != null ? el("span", {}, short(p.sold_now) + " eladva") : null,
+              p.sold_per_day != null ? el("span", { class: "money" }, "+" + nf(p.sold_per_day) + "/nap · " + money(p.revenue_per_day) + "/nap") : el("span", { class: "muted" }, "napi eladás: a 2. mérés után")),
+            el("div", { class: "vl-meta" }, "Bolt: ",
+              p.store_url ? el("a", { href: p.store_url, target: "_blank", rel: "noopener" }, (p.shop_name || "megnyitás") + " ↗") : el("b", {}, p.shop_name || "ismeretlen"),
+              p.store_sold ? el("span", {}, " · " + short(p.store_sold) + " eladás összesen") : null,
+              p.store_per_day ? el("span", {}, " · napi kb. " + nf(p.store_per_day)) : null)),
+          el("div", { class: "vl-btns" },
+            p.url ? el("a", { class: "btn", href: p.url, target: "_blank", rel: "noopener" }, "TikTok Shop ↗") : null,
+            known ? el("button", { type: "button", class: "btn", onclick: () => openProduct(p.product_id) }, "Adatlap") : null,
+            el("button", { type: "button", class: "btn" + (p.starred ? " on" : ""), onclick: async (e) => {
+              const next = !p.starred;
+              try { await rpc("tr_set_product", { p_product_id: p.product_id, p_starred: next }); p.starred = next; if (known) known.starred = next; renderVlink(); }
+              catch (err) { banner("Nem sikerült menteni. " + errText(err), true); } } }, p.starred ? "★ Csillagozva" : "☆ Csillagozás"),
+            el("button", { type: "button", class: "btn", onclick: () => addToMine(p) }, "+ Saját termékeim közé")));
+      })) : el("div", { class: "d-note" }, "Ehhez a videóhoz nincs TikTok Shop termék belinkelve (nincs rajta kosár ikon)."),
+      prods.length ? el("div", { class: "d-note" }, "A termékek bekerültek a követésbe: 6 óránként mérjük őket, a napi eladásuk a második mérés után jelenik meg.") : null);
+  }
+  $("vlink-form").addEventListener("submit", (e) => { e.preventDefault(); lookupVideo($("vlink").value.trim()); });
+
   // ---------- my products ("Saját termékek") ----------
   const MY = { list: null, loading: false, edit: null, imgs: null, busy: 0, pasteKind: "photo", note: "" };
   const CUR = { USD: "$", CNY: "¥", EUR: "€" };
