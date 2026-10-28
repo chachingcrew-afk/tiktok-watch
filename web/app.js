@@ -41,6 +41,19 @@
     for (const c of kids.flat()) if (c != null && c !== false) n.append(c instanceof Node ? c : document.createTextNode(String(c)));
     return n;
   }
+  // TikTok Shop links open in Chrome on phones, so the TikTok app does not catch them.
+  // iPhone/iPad: Chrome's own link scheme. Android: an intent aimed at Chrome, falling back to the
+  // normal browser when Chrome is missing. Computers: a normal new tab (a web page cannot pick the browser).
+  const UA = navigator.userAgent || "";
+  const IS_IOS = /iPhone|iPad|iPod/i.test(UA) || (/Macintosh/i.test(UA) && navigator.maxTouchPoints > 1);
+  const IS_ANDROID = /Android/i.test(UA);
+  function chromeHref(url) {
+    if (!url || !/^https?:\/\//i.test(url)) return url;
+    if (IS_IOS) return url.replace(/^http(s?):\/\//i, (_m, s) => s ? "googlechromes://" : "googlechrome://");
+    if (IS_ANDROID) return "intent://" + url.replace(/^https?:\/\//i, "") + "#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=" + encodeURIComponent(url) + ";end";
+    return url;
+  }
+  const chromeLink = (url, attrs, ...kids) => el("a", Object.assign({ href: chromeHref(url), target: IS_IOS || IS_ANDROID ? null : "_blank", rel: "noopener" }, attrs), ...kids);
   const store = {
     get(k) { try { return localStorage.getItem("tr-" + k); } catch (_) { return null; } },
     set(k, v) { try { localStorage.setItem("tr-" + k, v); } catch (_) {} },
@@ -557,7 +570,7 @@
             el("button", { type: "button", class: "btn" + (p.starred ? " on" : ""), onclick: () => toggleProductStar(p) }, p.starred ? "★ Csillagozva" : "☆ Csillagozás"),
             p.hidden ? el("button", { type: "button", class: "btn", onclick: () => setProductHidden(p, false) }, "Visszaállítás")
                      : el("button", { type: "button", class: "btn danger", onclick: () => setProductHidden(p, true) }, "Elrejtés"),
-            p.url ? el("a", { class: "btn", href: p.url, target: "_blank", rel: "noopener" }, "TikTok Shop ↗") : null,
+            p.url ? chromeLink(p.url, { class: "btn" }, "TikTok Shop ↗") : null,
             el("button", { type: "button", class: "btn", title: "Felveszi a Saját termékek közé, ott adhatod hozzá a beszállítói linket, képeket és árakat", onclick: () => addToMine(p) }, "+ Saját termékeim közé"),
             p.image ? el("a", { class: "btn", href: "https://lens.google.com/uploadbyurl?url=" + encodeURIComponent(p.image), target: "_blank", rel: "noopener", title: "Képkeresés: kik árulják még, például AliExpressen" }, "Hol árulják még? ↗") : null),
           storeNote(p),
@@ -1120,7 +1133,7 @@
               p.store_sold ? el("span", {}, " · " + short(p.store_sold) + " eladás összesen") : null,
               p.store_per_day ? el("span", {}, " · napi kb. " + nf(p.store_per_day)) : null)),
           el("div", { class: "vl-btns" },
-            p.url ? el("a", { class: "btn", href: p.url, target: "_blank", rel: "noopener" }, "TikTok Shop ↗") : null,
+            p.url ? chromeLink(p.url, { class: "btn" }, "TikTok Shop ↗") : null,
             known ? el("button", { type: "button", class: "btn", onclick: () => openProduct(p.product_id) }, "Adatlap") : null,
             watched ? el("button", { type: "button", class: "btn on", title: "Kattints, ha már nem szeretnéd csillagozva látni", onclick: () => watchProduct(p, false) }, "★ Megfigyelve")
                     : el("button", { type: "button", class: "btn primary", onclick: () => watchProduct(p, true) }, "+ Megfigyeléshez"),
@@ -1142,7 +1155,9 @@
     finally { MY.loading = false; renderMine(); }
   }
   const linkChips = (m) => [["tiktok_url", "TikTok"], ["ali_url", "AliExpress"], ["url_1688", "1688"], ["other_url", "Egyéb"]]
-    .filter(([k]) => m[k]).map(([k, l]) => el("a", { class: "chip blue", href: m[k], target: "_blank", rel: "noopener", onclick: (e) => e.stopPropagation() }, l + " ↗"));
+    .filter(([k]) => m[k]).map(([k, l]) => k === "tiktok_url"
+      ? chromeLink(m[k], { class: "chip blue", onclick: (e) => e.stopPropagation() }, l + " ↗")
+      : el("a", { class: "chip blue", href: m[k], target: "_blank", rel: "noopener", onclick: (e) => e.stopPropagation() }, l + " ↗"));
   function costLine(m) {
     const u = m.unit_price != null && m.unit_price !== "" ? Number(m.unit_price) : null, sh = m.shipping_price != null && m.shipping_price !== "" ? Number(m.shipping_price) : null;
     if (u == null && sh == null) return null;
