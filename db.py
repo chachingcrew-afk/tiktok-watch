@@ -117,6 +117,19 @@ def finish_run(conn, run_id: int, ok: bool, stats: dict, error: str | None = Non
             (ok, Jsonb(stats), (error or "")[:2000] or None, run_id),
         )
     conn.commit()
+    refresh_metrics(conn)
+
+
+def refresh_metrics(conn) -> None:
+    """Recompute the cached sales metrics the web app reads (tiktok_watch.shop_metrics).
+    The page loads from this cache, so it stays fast; every run refreshes it when it ends."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("select tiktok_watch.refresh_shop_metrics()")
+        conn.commit()
+    except Exception as e:  # the run itself already succeeded; a stale cache is not fatal
+        conn.rollback()
+        print(f"metrics refresh failed: {e}")
 
 
 def products_due(conn, hours: int) -> list[tuple[str, str]]:
