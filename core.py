@@ -64,6 +64,15 @@ class Config:
     fashion_fetches_per_category: int = _env_int("FASHION_FETCHES_PER_CATEGORY", 10)
     known_brands: list[str] = field(default_factory=list)
 
+    # Occasion dresses (party, cocktail, formal, wedding guest...): scanned deepest, wider price band.
+    # Categories in occasion_open_categories keep every dress; the others only keep titles that look
+    # like occasion wear (see shop.OCCASION).
+    occasion_categories: list[str] = field(default_factory=lambda: ["formal-dresses/601271", "bridesmaid-dresses/961672", "women-s-dresses/842504"])
+    occasion_open_categories: list[str] = field(default_factory=lambda: ["formal-dresses/601271", "bridesmaid-dresses/961672"])
+    occasion_min_price: int = _env_int("OCCASION_MIN_PRICE", 25)
+    occasion_max_price: int = _env_int("OCCASION_MAX_PRICE", 90)
+    occasion_fetches_per_category: int = _env_int("OCCASION_FETCHES_PER_CATEGORY", 40)
+
     # Keys the dashboard may change, with their expected type
     EDITABLE = {
         "hashtags": list, "videos_per_hashtag": int, "include_trending": bool, "trending_count": int,
@@ -74,6 +83,8 @@ class Config:
         "shop_fetches_per_category": int, "shop_track_min_sold": int,
         "fashion_categories": "categories", "fashion_min_price": int, "fashion_max_price": int,
         "fashion_fetches_per_category": int, "known_brands": "names",
+        "occasion_categories": "categories", "occasion_open_categories": "categories",
+        "occasion_min_price": int, "occasion_max_price": int, "occasion_fetches_per_category": int,
     }
 
     def apply_overrides(self, values: dict) -> list[str]:

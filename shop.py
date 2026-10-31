@@ -124,14 +124,30 @@ def in_range(p: dict, cfg) -> bool:
     return p["price"] is not None and cfg.shop_min_price <= p["price"] <= cfg.shop_max_price
 
 
+OCCASION = re.compile(
+    r"\b(party|cocktail|formal|evening|gown|prom|homecoming|wedding|bridesmaid|gala|banquet|ball|holiday|christmas|new year|nye|"
+    r"birthday|club|night out|date night|satin|silk|sequin|glitter|sparkl\w*|metallic|velvet|lace|one[- ]shoulder|off[- ]the[- ]shoulder|"
+    r"off[- ]shoulder|backless|corset|mermaid|ruched|high slit|side slit|split|draped|halter|elegant|occasion)\b", re.I)
+DRESSY = re.compile(r"\b(dress|gown|jumpsuit|romper)\b", re.I)
+
+
+def is_occasion(title: str | None) -> bool:
+    t = title or ""
+    return bool(DRESSY.search(t) and OCCASION.search(t))
+
+
 def groups(cfg) -> list[dict]:
-    """Category groups to scan: the general product categories, and women's clothing (more loads,
-    own price band, known brands left out)."""
+    """Category groups to scan: the general product categories, women's clothing (more loads,
+    own price band, known brands left out), and occasion dresses (deepest scan, widest price band)."""
     g = [{"focus": None, "cats": cfg.shop_categories, "loads": cfg.shop_fetches_per_category,
-          "lo": cfg.shop_min_price, "hi": cfg.shop_max_price, "skip_brands": False}]
+          "lo": cfg.shop_min_price, "hi": cfg.shop_max_price, "skip_brands": False, "stats": ""}]
     if cfg.fashion_categories:
         g.append({"focus": "women", "cats": cfg.fashion_categories, "loads": cfg.fashion_fetches_per_category,
-                  "lo": cfg.fashion_min_price, "hi": cfg.fashion_max_price, "skip_brands": True})
+                  "lo": cfg.fashion_min_price, "hi": cfg.fashion_max_price, "skip_brands": True, "stats": "women_"})
+    if cfg.occasion_categories:
+        g.append({"focus": "women", "cats": cfg.occasion_categories, "loads": cfg.occasion_fetches_per_category,
+                  "lo": cfg.occasion_min_price, "hi": cfg.occasion_max_price, "skip_brands": True, "stats": "occasion_",
+                  "open": set(cfg.occasion_open_categories)})
     return g
 
 
@@ -166,8 +182,13 @@ async def scan_categories(cfg, conn, proxies) -> set[str]:
                     continue
                 p["category_id"], p["category_name"] = cat.split("/")[-1], name
                 found[p["product_id"]] = p
-        ok = lambda p: p["price"] is not None and g["lo"] <= p["price"] <= g["hi"]  # noqa: E731
-        prefix = "women_" if g["focus"] else ""
+        open_ids = {c.split("/")[-1] for c in g.get("open", ())}
+        def ok(p):  # noqa: E306
+            if p["price"] is None or not (g["lo"] <= p["price"] <= g["hi"]):
+                return False
+            # occasion group: open categories keep every dress, mixed ones only occasion-looking titles
+            return "open" not in g or p.get("category_id") in open_ids or is_occasion(p.get("title"))
+        prefix = g["stats"]
         for p in found.values():
             STATS[prefix + "seen"] += 1
             if not ok(p):
