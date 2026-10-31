@@ -1178,8 +1178,9 @@
       const none = all.filter(m => !(m.category || "").trim()).length;
       const chip = (key, label, n) => el("button", { type: "button", class: "wt" + (MY.cat === key ? " on" : ""), "aria-pressed": String(MY.cat === key),
         onclick: () => { MY.cat = MY.cat === key ? "" : key; renderMine(); } }, label, el("em", {}, nf(n) + " db"));
-      cbox.hidden = !cats.length;
-      cbox.replaceChildren(el("span", { class: "wt-h" }, "Kategóriák:"), chip("", "Összes", all.length),
+      cbox.hidden = !all.length;
+      if (!cats.length) { cbox.replaceChildren(el("span", { class: "wt-h" }, "Kategóriák: kattints egy termékre, és a szerkesztőben a „Kategória” mezőben add meg.")); }
+      else cbox.replaceChildren(el("span", { class: "wt-h" }, "Kategóriák:"), chip("", "Összes", all.length),
         ...cats.map(c => chip(c, c, all.filter(m => (m.category || "").trim() === c).length)),
         none && cats.length ? chip(NOCAT, "Kategória nélkül", none) : null);
     }
