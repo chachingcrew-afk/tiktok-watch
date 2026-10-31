@@ -333,6 +333,9 @@ svg { display: block; }
 @media (max-width: 640px) { .lb-stage { padding: 56px 8px; } .lb-nav { top: auto; bottom: 10px; transform: none; } }
 
 /* my products */
+.mine-group-h { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 8px; margin: 10px 0 -4px; font-size: 15px; font-weight: 700; }
+.mine-group-h:first-child { margin-top: 0; }
+.mine-group-h em { font-style: normal; font-weight: 500; color: var(--muted); font-size: 13px; }
 .mine-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
 .mine-card { all: unset; cursor: pointer; display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .mine-card:hover { border-color: var(--ink); }

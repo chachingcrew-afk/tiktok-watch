@@ -1144,7 +1144,9 @@
   $("vlink-form").addEventListener("submit", (e) => { e.preventDefault(); lookupVideo($("vlink").value.trim()); });
 
   // ---------- my products ("Saját termékek") ----------
-  const MY = { list: null, loading: false, edit: null, imgs: null, busy: 0, pasteKind: "photo", note: "" };
+  const MY = { list: null, loading: false, edit: null, imgs: null, busy: 0, pasteKind: "photo", note: "", cat: "" };
+  const NOCAT = "\u0000none";
+  const mineCats = () => [...new Set((MY.list || []).map(m => (m.category || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "hu"));
   const CUR = { USD: "$", CNY: "¥", EUR: "€" };
   const curFmt = (n, c) => n == null || n === "" || isNaN(n) ? "–" : (CUR[c] || "") + Number(n).toLocaleString("hu-HU", { maximumFractionDigits: 2 });
   async function loadMine(force) {
@@ -1167,14 +1169,29 @@
     const box = $("mine-grid"); if (!box) return;
     if (MY.loading && !MY.list) { box.replaceChildren(el("div", { class: "empty" }, "Betöltés…")); return; }
     const q = ($("mine-q").value || "").trim().toLowerCase();
-    const list = (MY.list || []).filter(m => !q || [m.name, m.notes, m.tiktok_url, m.ali_url, m.url_1688].some(x => (x || "").toLowerCase().includes(q)));
+    const all = MY.list || [];
+    const cats = mineCats();
+    if (MY.cat && MY.cat !== NOCAT && !cats.includes(MY.cat)) MY.cat = "";
+    // category chips: all, each category, and the products without one
+    const cbox = $("mine-cats");
+    if (cbox) {
+      const none = all.filter(m => !(m.category || "").trim()).length;
+      const chip = (key, label, n) => el("button", { type: "button", class: "wt" + (MY.cat === key ? " on" : ""), "aria-pressed": String(MY.cat === key),
+        onclick: () => { MY.cat = MY.cat === key ? "" : key; renderMine(); } }, label, el("em", {}, nf(n) + " db"));
+      cbox.hidden = !cats.length;
+      cbox.replaceChildren(el("span", { class: "wt-h" }, "Kategóriák:"), chip("", "Összes", all.length),
+        ...cats.map(c => chip(c, c, all.filter(m => (m.category || "").trim() === c).length)),
+        none && cats.length ? chip(NOCAT, "Kategória nélkül", none) : null);
+    }
+    const list = all.filter(m => (!MY.cat || (MY.cat === NOCAT ? !(m.category || "").trim() : (m.category || "").trim() === MY.cat))
+      && (!q || [m.name, m.notes, m.category, m.tiktok_url, m.ali_url, m.url_1688].some(x => (x || "").toLowerCase().includes(q))));
     if (!list.length) {
       box.replaceChildren(el("div", { class: "mine-empty" },
         el("b", {}, (MY.list || []).length ? "Nincs találat." : "Még nincs saját terméked."),
         el("span", {}, "Az „+ Új termék” gombbal adhatsz hozzá egyet, vagy a Termékradarban egy termék adatlapján a „+ Saját termékeim közé” gombbal.")));
       return;
     }
-    box.replaceChildren(...list.map(m => {
+    const card = (m) => {
       const cost = costLine(m);
       const margin = m.sale_price && cost != null && m.currency === "USD" ? Number(m.sale_price) - cost : null;
       return el("button", { type: "button", class: "mine-card", onclick: () => openMine(m) },
@@ -1187,7 +1204,13 @@
           el("div", { class: "mine-links" }, ...linkChips(m),
             m.photos ? el("span", { class: "chip" }, `${m.photos} kép`) : null,
             m.size_charts ? el("span", { class: "chip" }, "Mérettábla") : null)));
-    }));
+    };
+    // "Összes": grouped under category headings (when there are categories at all)
+    if (MY.cat || !cats.length) { box.replaceChildren(...list.map(card)); return; }
+    const groups = new Map();
+    for (const m of list) { const c = (m.category || "").trim() || NOCAT; if (!groups.has(c)) groups.set(c, []); groups.get(c).push(m); }
+    const order = [...groups.keys()].sort((a, b) => a === NOCAT ? 1 : b === NOCAT ? -1 : a.localeCompare(b, "hu"));
+    box.replaceChildren(...order.flatMap(c => [el("div", { class: "mine-group-h" }, c === NOCAT ? "Kategória nélkül" : c, el("em", {}, nf(groups.get(c).length) + " db")), ...groups.get(c).map(card)]));
   }
   $("mine-q").addEventListener("input", renderMine);
   $("mine-new").addEventListener("click", () => openMine(null));
@@ -1205,7 +1228,8 @@
   function closeMine() { MY.edit = null; $("drawer").hidden = true; $("scrim").hidden = true; document.body.style.overflow = ""; }
   async function addToMine(p) {
     try {
-      const id = await rpc("tr_save_my_product", { p: { name: p.title || "", tiktok_url: (p.url || "").split("?")[0] || null, source_product_id: p.product_id, currency: "USD", sale_price: p.price } });
+      const t = wtype(p);
+      const id = await rpc("tr_save_my_product", { p: { name: p.title || "", category: t[0] !== "other" ? t[1] : null, tiktok_url: (p.url || "").split("?")[0] || null, source_product_id: p.product_id, currency: "USD", sale_price: p.price } });
       closeDrawer(); selectView("mine");
       MY.list = await rpc("tr_my_products") || []; renderMine();
       const m = MY.list.find(x => x.id === id); if (m) openMine(m);
@@ -1255,7 +1279,7 @@
   // read the form into MY.edit
   function readMineForm() {
     const v = (id) => { const n = document.getElementById(id); return n ? n.value.trim() : ""; };
-    Object.assign(MY.edit, { name: v("m-name"), tiktok_url: v("m-tiktok"), ali_url: v("m-ali"), url_1688: v("m-1688"), other_url: v("m-other"),
+    Object.assign(MY.edit, { name: v("m-name"), category: v("m-cat"), tiktok_url: v("m-tiktok"), ali_url: v("m-ali"), url_1688: v("m-1688"), other_url: v("m-other"),
       currency: v("m-cur") || "USD", unit_price: v("m-unit").replace(",", "."), shipping_price: v("m-ship").replace(",", "."), sale_price: v("m-sale").replace(",", "."), notes: v("m-notes") });
   }
   async function saveMine(quiet) {
@@ -1341,6 +1365,8 @@
       el("form", { class: "mine-form", novalidate: true, onsubmit: (e) => { e.preventDefault(); saveMine(false); } },
         el("div", { class: "d-sec" },
           field("m-name", "Termék neve", m.name, { placeholder: "pl. Fleece-lined winter tights" }),
+          field("m-cat", "Kategória", m.category, { list: "m-cat-list", placeholder: "pl. " + (mineCats()[0] || "Party, alkalmi ruha") }),
+          el("datalist", { id: "m-cat-list" }, ...[...new Set([...mineCats(), ...WTYPES.map(w => w[1])])].map(c => el("option", { value: c }))),
           linkField("m-tiktok", "TikTok Shop link", m.tiktok_url, "https://shop.tiktok.com/us/pdp/…"),
           linkField("m-ali", "AliExpress link", m.ali_url, "https://www.aliexpress.com/item/…"),
           linkField("m-1688", "1688.com link", m.url_1688, "https://detail.1688.com/offer/…"),
