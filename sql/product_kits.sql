@@ -1,0 +1,5 @@
+-- 2026-11-01: "Termékcsomagok" (product kits), migration product_kits.
+-- tiktok_watch.kits: one row per TikTok Shop product (data = what the tr-kit edge function returned).
+-- RPCs: tr_kits(), tr_save_kit(d jsonb), tr_kit_saved(kid, folder), tr_remove_kit(kid) (soft delete).
+-- Files are not stored here: the web app downloads them through tr-kit and writes them into a folder
+-- the user picks on their computer (File System Access API, Chrome/Edge).

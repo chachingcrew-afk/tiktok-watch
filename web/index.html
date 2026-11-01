@@ -74,6 +74,8 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3l3 3 3-3 3 3-2 4v11H8V10L6 6z"/></svg>Női ruha</button>
       <button type="button" data-view="mine" class="nav-item">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4z"/></svg>Saját termékek</button>
+      <button type="button" data-view="kits" class="nav-item">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7l9-4 9 4-9 4z M3 7v10l9 4 9-4V7 M12 11v10 M7.5 5l9 4"/></svg>Termékcsomagok</button>
       <button type="button" data-view="videos" class="nav-item">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="13" height="14" rx="2"/><path d="M16 10l5-3v10l-5-3"/></svg>Videók</button>
       <button type="button" data-view="runs" class="nav-item">
@@ -201,6 +203,23 @@
     <section id="view-runs" class="view" hidden>
       <header class="page-head"><div><h1>Futások</h1><p class="sub">Az automatikus gyűjtések és mérések naplója. Kattints egy sorra a részletekért.</p></div></header>
       <div class="table-card"><div class="table-scroll" id="runs"></div></div>
+    </section>
+
+    <!-- PRODUCT KITS -->
+    <section id="view-kits" class="view" hidden>
+      <header class="page-head">
+        <div>
+          <h1>Termékcsomagok</h1>
+          <p class="sub">TikTok Shop termékek mindennel, amiből termékoldal és termékfotó készül: adatok, galéria, színek, leírásképek, alkotói videók, vélemények. Egy kattintással a gépeden lévő mappába menti.</p>
+        </div>
+      </header>
+      <div class="kit-add">
+        <textarea id="kit-links" rows="2" placeholder="TikTok Shop termék link(ek), egy sorban egy" aria-label="TikTok Shop termék linkek"></textarea>
+        <button type="button" class="btn primary" id="kit-add">Lekérés</button>
+      </div>
+      <div class="kit-root" id="kit-root"></div>
+      <p class="d-note" id="kit-msg" role="status"></p>
+      <div class="kit-list" id="kit-list"></div>
     </section>
 
     <!-- MY PRODUCTS -->

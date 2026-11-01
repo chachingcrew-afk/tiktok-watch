@@ -196,7 +196,7 @@
 
   // ---------- navigation ----------
   function selectView(v) {
-    if (!["products", "women", "mine", "videos", "runs", "settings"].includes(v)) v = "products";
+    if (!["products", "women", "mine", "kits", "videos", "runs", "settings"].includes(v)) v = "products";
     const focus = v === "women" ? "women" : null;
     if (focus !== P.focus) { P.focus = focus; P.page = 0; P.cat = ""; P.found = null; P.q = ""; $("q").value = ""; if (state.shop.length) { renderKpis(); renderSeg(); renderCats(); renderTypes(); renderTable(); } }
     $("products-title").textContent = focus ? "Női ruha" : "Termékek";
@@ -204,9 +204,10 @@
     for (const b of document.querySelectorAll(".nav-item")) {
       if (b.dataset.view === v) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
     }
-    for (const s of ["products", "mine", "videos", "runs", "settings"]) $("view-" + s).hidden = s !== (v === "women" ? "products" : v);
+    for (const s of ["products", "mine", "kits", "videos", "runs", "settings"]) $("view-" + s).hidden = s !== (v === "women" ? "products" : v);
     store.set("view", v);
     if (v === "mine") loadMine();
+    if (v === "kits") loadKits();
   }
   for (const b of document.querySelectorAll(".nav-item")) b.addEventListener("click", () => selectView(b.dataset.view));
 
@@ -1410,6 +1411,239 @@
     if (!files.length) return;
     e.preventDefault(); addMineImages(files, MY.pasteKind);
   });
+
+  // ---------- Termékcsomagok (product kits) ----------
+  // A TikTok Shop product link -> everything a product page and product photos are made from (data, gallery,
+  // color photos, description images, creator videos, reviews), saved into a folder on this computer.
+  const KIT = { list: null, loading: false, adding: false, msg: "", busy: {}, root: null, rootName: "", videos: 10 };
+  const KIT_DIRS = ["01_info", "02_gallery", "03_colors", "04_description_images", "05_videos", "06_reviews", "07_models", "08_references", "09_prompts", "10_output"];
+  const canFolders = () => typeof window.showDirectoryPicker === "function";
+  const canFns = () => !!(sb.functions && sb.functions.invoke);
+
+  // the chosen folder survives reloads (IndexedDB keeps the handle; the browser asks for permission again)
+  function kitDb() {
+    return new Promise((res, rej) => { const r = indexedDB.open("tr-kits", 1); r.onupgradeneeded = () => r.result.createObjectStore("kv"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  }
+  async function kvGet(k) { try { const d = await kitDb(); return await new Promise((res) => { const q = d.transaction("kv").objectStore("kv").get(k); q.onsuccess = () => res(q.result); q.onerror = () => res(null); }); } catch (_) { return null; } }
+  async function kvSet(k, v) { try { const d = await kitDb(); await new Promise((res) => { const t = d.transaction("kv", "readwrite"); t.objectStore("kv").put(v, k); t.oncomplete = res; t.onerror = res; }); } catch (_) {} }
+  (async () => { const h = await kvGet("root"); if (h) { KIT.root = h; KIT.rootName = h.name; renderKits(); } })();
+
+  async function pickRoot() {
+    if (!canFolders()) { KIT.msg = "Ez a böngésző nem tud mappába menteni. Használj Chrome-ot vagy Edge-et a számítógépen."; renderKits(); return; }
+    try {
+      const h = await window.showDirectoryPicker({ id: "tr-kits", mode: "readwrite" });
+      KIT.root = h; KIT.rootName = h.name; await kvSet("root", h); KIT.msg = ""; renderKits();
+    } catch (e) { if (e && e.name !== "AbortError") { KIT.msg = "A mappát nem sikerült kiválasztani. " + (e.message || ""); renderKits(); } }
+  }
+  async function rootReady() {
+    if (!KIT.root) { await pickRoot(); if (!KIT.root) return null; }
+    const opts = { mode: "readwrite" };
+    if ((await KIT.root.queryPermission(opts)) === "granted" || (await KIT.root.requestPermission(opts)) === "granted") return KIT.root;
+    KIT.msg = "A böngésző nem kapott írási engedélyt a mappához."; renderKits(); return null;
+  }
+
+  async function loadKits(force) {
+    if (KIT.loading || (KIT.list && !force)) { renderKits(); return; }
+    KIT.loading = true; renderKits();
+    try { KIT.list = await rpc("tr_kits") || []; }
+    catch (e) { KIT.list = KIT.list || []; banner("Nem sikerült betölteni a termékcsomagokat. " + errText(e), true); }
+    finally { KIT.loading = false; renderKits(); }
+  }
+  async function kitCall(body) {
+    const { data, error } = await sb.functions.invoke("tr-kit", { body, region: "us-east-1" });  // TikTok serves product pages and videos to US visitors
+    if (error) {
+      let msg = error.message || "ismeretlen hiba";
+      try { const j = await error.context.json(); if (j && j.error) msg = j.error; } catch (_) {}
+      throw new Error(msg);
+    }
+    return data;
+  }
+  async function addKits() {
+    const box = $("kit-links");
+    const links = [...new Set((box.value || "").split(/[\s,]+/).map(s => s.trim()).filter(s => /tiktok\.com|^\d{15,25}$/.test(s)))];
+    if (!links.length) { KIT.msg = "Másolj be legalább egy TikTok Shop termék linket."; renderKits(); return; }
+    if (!canFns()) { KIT.msg = "A lekérés csak a weboldalon (Netlify) működik, a csevegésben lévő változatban nem."; renderKits(); return; }
+    KIT.adding = true; let ok = 0; const errs = [];
+    for (let i = 0; i < links.length; i++) {
+      KIT.msg = `Termék lekérése (${i + 1}/${links.length})…`; renderKits();
+      try { const d = await kitCall({ action: "info", url: links[i] }); await rpc("tr_save_kit", { d }); ok++; }
+      catch (e) { errs.push((links.length > 1 ? links[i].slice(0, 60) + ": " : "") + (e.message || e)); }
+    }
+    KIT.adding = false; box.value = "";
+    KIT.msg = (ok ? `${ok} termék lekérve.` : "") + (errs.length ? " " + errs.join(" · ") : "");
+    await loadKits(true);
+  }
+  async function refreshKit(k) {
+    KIT.busy[k.id] = "Frissítés…"; renderKits();
+    try { const d = await kitCall({ action: "info", url: k.product_id }); await rpc("tr_save_kit", { d }); delete KIT.busy[k.id]; await loadKits(true); }
+    catch (e) { KIT.busy[k.id] = "Nem sikerült frissíteni: " + (e.message || e); renderKits(); }
+  }
+  async function removeKit(k) {
+    if (KIT.busy[k.id] !== "confirm") { KIT.busy[k.id] = "confirm"; renderKits(); setTimeout(() => { if (KIT.busy[k.id] === "confirm") { delete KIT.busy[k.id]; renderKits(); } }, 6000); return; }
+    try { await rpc("tr_remove_kit", { kid: k.id }); delete KIT.busy[k.id]; await loadKits(true); } catch (e) { KIT.busy[k.id] = errText(e); renderKits(); }
+  }
+  // reviews come from the browser extension: it reads them on the product page and saves them
+  function kitReviews(k) {
+    const url = `https://shop.tiktok.com/us/pdp/x/${k.product_id}#tr-reviews`;
+    window.postMessage({ src: "tr-app", cmd: "session" }, location.origin);
+    window.open(url, "_blank", "noopener");
+    KIT.busy[k.id] = "Vélemények gyűjtése a megnyílt TikTok Shop fülön (a bővítmény kell hozzá)…"; renderKits();
+    const until = Date.now() + 4 * 60 * 1000, before = Number(k.reviews) || 0;
+    const t = setInterval(async () => {
+      if (Date.now() > until) { clearInterval(t); delete KIT.busy[k.id]; await loadKits(true); return; }
+      try { const list = await rpc("tr_kits") || []; const n = list.find(x => x.id === k.id); if (n && (Number(n.reviews) > before || n.review_status === "done")) { KIT.list = list; if (n.review_status === "done") { clearInterval(t); delete KIT.busy[k.id]; } renderKits(); } } catch (_) {}
+    }, 8000);
+  }
+
+  // ---- writing the folder ----
+  const safeName = (s) => (s || "").replace(/[\\/:*?"<>|#%]+/g, "-").replace(/\s+/g, " ").trim().slice(0, 60) || "x";
+  const csvCell = (v) => { const s = v == null ? "" : String(v); return /[",\n;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const csv = (rows) => rows.map(r => r.map(csvCell).join(",")).join("\n") + "\n";
+  async function writeFile(dir, name, data) {
+    const fh = await dir.getFileHandle(name, { create: true });
+    const w = await fh.createWritable(); await w.write(data); await w.close();
+  }
+  async function fileExists(dir, name) { try { await dir.getFileHandle(name); return true; } catch (_) { return false; } }
+  function kitReadme(d) {
+    return [
+      `${d.title}`, `${d.url}`, "",
+      "Folders / Mappák:",
+      "01_info                 product.json (all data), product.md (description, specs, prices, reviews summary), skus.csv",
+      "02_gallery              the TikTok Shop gallery photos (supplier photos)",
+      "03_colors               one photo per color / variant",
+      "04_description_images   images from the product description (often the size chart)",
+      "05_videos               the most viewed creator videos of the product + videos.csv (all of them, with links)",
+      "06_reviews              customer reviews (reviews.md) and their photos",
+      "07_models               put your model photos here",
+      "08_references           put example / reference images here",
+      "09_prompts              the image prompts go here",
+      "10_output               finished product photos go here",
+      "", "Creator videos and supplier photos are for reference only. Do not publish them without permission.", "",
+    ].join("\n");
+  }
+  function kitMarkdown(d, rv) {
+    const L = [];
+    L.push(`# ${d.title}`, "", `- TikTok Shop: ${d.url}`, `- Store: ${d.shop_name || "–"}${d.shop_followers ? ` (${d.shop_followers} followers, rating ${d.shop_rating ?? "–"})` : ""}`);
+    L.push(`- Price: $${d.price ?? "–"}${d.price_max && d.price_max !== d.price ? `–$${d.price_max}` : ""}${d.price_original ? ` (compare at $${d.price_original})` : ""}`);
+    L.push(`- Rating: ${d.rating ?? "–"} from ${d.review_count ?? "–"} reviews · Sold: ${d.sold ?? "–"}`);
+    if (d.options && d.options.length) for (const o of d.options) L.push(`- ${o.name}: ${o.values.join(", ")}`);
+    if (d.summary) L.push("", "## Summary", "", d.summary);
+    if (d.description && d.description.length) L.push("", "## Description (supplier)", "", ...d.description.map(t => t.split("\n").map(x => "- " + x.trim()).join("\n")));
+    if (d.specifications && d.specifications.length) L.push("", "## Specifications", "", ...d.specifications.map(s => `- ${s.name}: ${s.value}`));
+    if (d.keywords) L.push("", "## Search keywords", "", d.keywords);
+    if (rv && rv.length) {
+      const by = [5, 4, 3, 2, 1].map(s => `${s}★ ${rv.filter(r => Number(r.rating) === s).length}`).join(" · ");
+      L.push("", `## Reviews (${rv.length} saved: ${by})`, "", "See 06_reviews/reviews.md for the full text.");
+    }
+    return L.join("\n") + "\n";
+  }
+  function reviewsMarkdown(d, rv) {
+    const L = [`# Reviews: ${d.title}`, "", `${rv.length} reviews saved from TikTok Shop. Lowest ratings first: they show what buyers worry about.`, ""];
+    rv.slice().sort((a, b) => (Number(a.rating) || 0) - (Number(b.rating) || 0)).forEach((r, i) => {
+      L.push(`## ${i + 1}. ${"★".repeat(Number(r.rating) || 0)}${r.sku ? " · " + r.sku : ""}${r.review_time ? " · " + String(r.review_time).slice(0, 10) : ""}`);
+      if (r.text) L.push("", r.text);
+      if (r.images && r.images.length) L.push("", `Photos: ${r.images.map((_, j) => `photos/review-${String(i + 1).padStart(3, "0")}-${j + 1}.jpg`).join(", ")}`);
+      L.push("");
+    });
+    return L.join("\n");
+  }
+  async function saveKitToFolder(k) {
+    const root = await rootReady(); if (!root) return;
+    const d = k.data, set = (t) => { KIT.busy[k.id] = t; renderKits(); };
+    const name = safeName(`${slug(d.title).slice(0, 40)}-${String(d.product_id).slice(-6)}`);
+    const errs = [];
+    try {
+      const dir = await root.getDirectoryHandle(name, { create: true });
+      const sub = {};
+      for (const n of KIT_DIRS) sub[n] = await dir.getDirectoryHandle(n, { create: true });
+      set("Adatok mentése…");
+      let rv = [];
+      try { const r = await rpc("tr_reviews", { pid: d.product_id }); rv = (r && r.reviews) || []; } catch (_) {}
+      await writeFile(dir, "README.txt", kitReadme(d));
+      await writeFile(sub["01_info"], "product.json", JSON.stringify(d, null, 2));
+      await writeFile(sub["01_info"], "product.md", kitMarkdown(d, rv));
+      const optNames = (d.options || []).map(o => o.name);
+      await writeFile(sub["01_info"], "skus.csv", csv([[...optNames, "price", "compare_at", "stock"], ...(d.skus || []).map(s => [...optNames.map(n => s.options[n]), s.price, s.price_original, s.stock])]));
+      const pics = [
+        ...(d.gallery || []).map((u, i) => [sub["02_gallery"], `${String(i + 1).padStart(2, "0")}.jpg`, u]),
+        ...(d.colors || []).filter(c => c.image).map(c => [sub["03_colors"], `${safeName(c.name)}.jpg`, c.image]),
+        ...(d.description_images || []).map((u, i) => [sub["04_description_images"], `${String(i + 1).padStart(2, "0")}.jpg`, u]),
+      ];
+      for (let i = 0; i < pics.length; i++) {
+        const [dd, fn, u] = pics[i];
+        set(`Képek letöltése ${i + 1}/${pics.length}…`);
+        if (await fileExists(dd, fn)) continue;
+        try { const b = await kitCall({ action: "file", url: u }); await writeFile(dd, fn, b); } catch (e) { errs.push(fn); }
+      }
+      const vids = (d.videos || []);
+      await writeFile(sub["05_videos"], "videos.csv", csv([["rank", "views", "likes", "seconds", "uploaded", "creator", "title", "link"],
+        ...vids.map((v, i) => [i + 1, v.plays, v.likes, v.duration_ms ? Math.round(v.duration_ms / 1000) : "", (v.uploaded || "").slice(0, 10), v.author, v.title, `https://www.tiktok.com/@_/video/${v.item_id}`])]));
+      const top = vids.slice(0, KIT.videos);
+      for (let i = 0; i < top.length; i++) {
+        const v = top[i], fn = `${String(i + 1).padStart(2, "0")}_${Math.round((v.plays || 0) / 1000)}k-views_${v.item_id}.mp4`;
+        set(`Videók letöltése ${i + 1}/${top.length}…`);
+        if (await fileExists(sub["05_videos"], fn)) continue;
+        try { const b = await kitCall({ action: "video", item_id: v.item_id, author: v.author }); await writeFile(sub["05_videos"], fn, b); } catch (e) { errs.push(fn); }
+      }
+      if (rv.length) {
+        set("Vélemények mentése…");
+        await writeFile(sub["06_reviews"], "reviews.md", reviewsMarkdown(d, rv));
+        const photos = await sub["06_reviews"].getDirectoryHandle("photos", { create: true });
+        const sorted = rv.slice().sort((a, b) => (Number(a.rating) || 0) - (Number(b.rating) || 0));
+        for (let i = 0; i < sorted.length; i++) for (let j = 0; j < (sorted[i].images || []).length; j++) {
+          const img = sorted[i].images[j]; if (typeof img !== "string") continue;
+          await writeFile(photos, `review-${String(i + 1).padStart(3, "0")}-${j + 1}.jpg`, b64ToBlob(img, "image/jpeg"));
+        }
+      } else {
+        await writeFile(sub["06_reviews"], "README.txt", "No reviews saved yet. In Termékradar press \"Vélemények\" on this product (needs the browser extension), then save the folder again.\n");
+      }
+      for (const n of ["07_models", "08_references", "09_prompts", "10_output"]) if (!(await fileExists(sub[n], ".keep"))) await writeFile(sub[n], ".keep", "");
+      await rpc("tr_kit_saved", { kid: k.id, folder: `${KIT.rootName}/${name}` });
+      KIT.busy[k.id] = errs.length ? `Elmentve a ${KIT.rootName}/${name} mappába, de ${errs.length} fájl nem jött le (${errs.slice(0, 3).join(", ")}${errs.length > 3 ? "…" : ""}). Mentsd újra később: a meglévő fájlokat nem tölti le újra.` : `Elmentve: ${KIT.rootName}/${name}`;
+      await loadKits(true);
+    } catch (e) { KIT.busy[k.id] = "Nem sikerült menteni: " + (e.message || e); renderKits(); }
+  }
+
+  function renderKits() {
+    const box = $("kit-list"); if (!box) return;
+    const root = $("kit-root");
+    root.replaceChildren(
+      el("span", { class: "muted" }, "Mentési mappa: "),
+      el("b", {}, KIT.rootName || "nincs kiválasztva"),
+      el("button", { type: "button", class: "btn", onclick: pickRoot }, KIT.rootName ? "Másik mappa" : "Mappa kiválasztása"),
+      el("label", { class: "kit-vidn" }, "Videók termékenként:", el("select", { onchange: (e) => { KIT.videos = Number(e.target.value); } },
+        ...[0, 5, 10, 20].map(n => el("option", { value: String(n), selected: n === KIT.videos ? "" : null }, n ? String(n) : "egy sem")))));
+    $("kit-msg").textContent = KIT.msg || (canFolders() ? "" : "Mappába mentéshez Chrome vagy Edge kell a számítógépen.");
+    $("kit-add").disabled = KIT.adding;
+    if (KIT.loading && !KIT.list) { box.replaceChildren(el("div", { class: "empty" }, "Betöltés…")); return; }
+    const list = KIT.list || [];
+    if (!list.length) { box.replaceChildren(el("div", { class: "mine-empty" }, el("b", {}, "Még nincs termékcsomag."), el("span", {}, "Másolj be fent egy vagy több TikTok Shop termék linket, és nyomd meg a Lekérés gombot."))); return; }
+    box.replaceChildren(...list.map(k => {
+      const d = k.data || {}, busy = KIT.busy[k.id];
+      const chips = [
+        `${(d.gallery || []).length} galériakép`, `${(d.colors || []).length} szín`, `${(d.sizes || []).length} méret`,
+        `${(d.description_images || []).length} leíráskép`, `${(d.videos || []).length} videó`, `${Number(k.reviews) || 0} vélemény mentve`];
+      return el("div", { class: "kit-card" },
+        el("div", { class: "mine-thumb" }, d.gallery && d.gallery[0] ? el("img", { src: sized(d.gallery[0], 240), alt: "", loading: "lazy", referrerpolicy: "no-referrer" }) : "Nincs kép"),
+        el("div", { class: "mine-body" },
+          el("b", {}, d.title || d.product_id),
+          el("div", { class: "kit-meta" },
+            d.price != null ? el("span", {}, el("strong", {}, "$" + d.price), d.price_original ? el("s", {}, " $" + d.price_original) : null) : null,
+            d.rating != null ? el("span", {}, `${d.rating}★ (${nf(d.review_count)} értékelés)`) : null,
+            d.sold != null ? el("span", {}, `${nf(d.sold)} eladva`) : null,
+            d.shop_name ? el("span", { class: "muted" }, d.shop_name) : null),
+          el("div", { class: "mine-links" }, ...chips.map(c => el("span", { class: "chip" }, c))),
+          k.saved_at ? el("div", { class: "d-note" }, `Mentve: ${k.folder || ""} · ${new Date(k.saved_at).toLocaleString("hu-HU")}`) : null,
+          busy && busy !== "confirm" ? el("div", { class: "d-note", role: "status" }, busy) : null,
+          el("div", { class: "kit-actions" },
+            el("button", { type: "button", class: "btn primary", onclick: () => saveKitToFolder(k) }, k.saved_at ? "Mentés újra a gépre" : "Mentés a gépre"),
+            el("button", { type: "button", class: "btn", onclick: () => kitReviews(k) }, "Vélemények"),
+            el("button", { type: "button", class: "btn", onclick: () => refreshKit(k) }, "Frissítés"),
+            chromeLink(d.url || `https://shop.tiktok.com/us/pdp/x/${k.product_id}`, { class: "btn" }, "TikTok Shop ↗"),
+            el("button", { type: "button", class: "btn danger", onclick: () => removeKit(k) }, busy === "confirm" ? "Biztosan törlöd?" : "Törlés"))));
+    }));
+  }
+  $("kit-add").addEventListener("click", addKits);
 
   boot();
 })();
