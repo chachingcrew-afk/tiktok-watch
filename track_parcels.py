@@ -22,6 +22,7 @@ API = "https://api.17track.net/track/v2.4"
 BATCH = 40                 # 17TRACK accepts at most 40 numbers per call
 RECHECK_HOURS = 3          # don't ask for the same parcel more often than this
 GIVE_UP_DAYS = 90          # stop checking parcels shipped longer ago than this
+SINCE = "2026-10-17"       # only orders placed from this day on (store launch)
 ALREADY_REGISTERED = {-18019901}
 NO_INFO_YET = {-18019909}  # registered, 17TRACK has not fetched the carrier yet: not an error
 
@@ -56,9 +57,9 @@ def chunks(xs, n):
 def register(conn, key: str, stats: dict) -> None:
     with conn.cursor() as cur:
         cur.execute("""select number from tiktok_watch.parcels
-                       where registered_at is null and reg_tries < 5
+                       where registered_at is null and reg_tries < 5 and (order_at is null or order_at >= %s::date)
                          and (fulfilled_at is null or fulfilled_at > now() - make_interval(days => %s))
-                       order by fulfilled_at nulls last limit 400""", (GIVE_UP_DAYS,))
+                       order by fulfilled_at nulls last limit 400""", (SINCE, GIVE_UP_DAYS))
         todo = [r[0] for r in cur.fetchall()]
     for part in chunks(todo, BATCH):
         res = call(key, "register", [{"number": n} for n in part])
@@ -107,10 +108,10 @@ def parse(info: dict) -> dict:
 def refresh(conn, key: str, stats: dict) -> None:
     with conn.cursor() as cur:
         cur.execute("""select number, carrier from tiktok_watch.parcels
-                       where registered_at is not null and delivered_at is null
+                       where registered_at is not null and delivered_at is null and (order_at is null or order_at >= %s::date)
                          and (checked_at is null or checked_at < now() - make_interval(hours => %s))
                          and (fulfilled_at is null or fulfilled_at > now() - make_interval(days => %s))
-                       order by checked_at nulls first limit 800""", (RECHECK_HOURS, GIVE_UP_DAYS))
+                       order by checked_at nulls first limit 800""", (SINCE, RECHECK_HOURS, GIVE_UP_DAYS))
         todo = cur.fetchall()
     for part in chunks(todo, BATCH):
         res = call(key, "gettrackinfo", [{"number": n, **({"carrier": c} if c else {})} for n, c in part])
