@@ -23,6 +23,7 @@ BATCH = 40                 # 17TRACK accepts at most 40 numbers per call
 RECHECK_HOURS = 3          # don't ask for the same parcel more often than this
 GIVE_UP_DAYS = 90          # stop checking parcels shipped longer ago than this
 ALREADY_REGISTERED = {-18019901}
+NO_INFO_YET = {-18019909}  # registered, 17TRACK has not fetched the carrier yet: not an error
 
 
 def call(key: str, path: str, body) -> dict:
@@ -128,6 +129,10 @@ def refresh(conn, key: str, stats: dict) -> None:
                     stats["delivered_now"] += 1
             for x in data.get("rejected") or []:
                 err = x.get("error") or {}
+                if err.get("code") in NO_INFO_YET:
+                    cur.execute("update tiktok_watch.parcels set checked_at = now(), reg_error = null where number = %s", (x.get("number"),))
+                    stats["no_info_yet"] = stats.get("no_info_yet", 0) + 1
+                    continue
                 cur.execute("update tiktok_watch.parcels set checked_at = now(), reg_error = %s where number = %s",
                             (f"{err.get('code')}: {err.get('message')}", x.get("number")))
                 stats["check_errors"] += 1
