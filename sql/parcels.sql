@@ -1,0 +1,5 @@
+-- 2026-11-03: parcel tracking for Orlivane orders, migration parcels_tracking.
+-- tiktok_watch.parcels: one row per tracking number (copied from fulfilled Shopify orders by the
+-- "Orlivane Csomagok" claude.ai page through tr_parcels_upsert(items jsonb)).
+-- track_parcels.py (.github/workflows/parcels.yml, every 3 hours) registers new numbers with the
+-- 17TRACK API (secret TRACK17_KEY) and stores status / last event / delivered_at. tr_parcels() lists them.
