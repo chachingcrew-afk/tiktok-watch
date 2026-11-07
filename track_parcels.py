@@ -20,7 +20,7 @@ import db
 
 API = "https://api.17track.net/track/v2.4"
 BATCH = 40                 # 17TRACK accepts at most 40 numbers per call
-RECHECK_HOURS = 3          # don't ask for the same parcel more often than this
+RECHECK_HOURS = 1          # skip parcels checked within the last hour (protects against double runs)
 GIVE_UP_DAYS = 90          # stop checking parcels shipped longer ago than this
 SINCE = "2026-10-17"       # only orders placed from this day on (store launch)
 ALREADY_REGISTERED = {-18019901}
