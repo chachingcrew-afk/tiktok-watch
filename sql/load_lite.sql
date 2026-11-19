@@ -1,0 +1,6 @@
+-- 2026-11-19: migrations load_lite + load_lite_videos_split.
+-- tiktok_watch.shop_rows_lite(ids): slim product list as {k: keys, r: rows}; cached in load_cache.lite by refresh_shop_metrics().
+-- public.tr_load_lite(): slim list + starred/hidden ids + stores, runs, settings (~2.7 MB instead of ~9 MB, no videos).
+-- public.tr_videos(): videos + view history, loaded after the products are on screen.
+-- public.tr_extra(ids): per-page fields the slim list leaves out (url, image, twin_shops, drawer facts).
+-- The old public.tr_load() stays until the new web app is deployed.
