@@ -1,8 +1,8 @@
-name: Scan TikTok Shop categories (twice a day)
+name: Scan TikTok Shop categories (every 2 hours)
 
 on:
   schedule:
-    - cron: '23 4,16 * * *'   # twice a day (GitHub may start it a few hours late)
+    - cron: '23 */2 * * *'   # every 2 hours: look for new products (GitHub may start it late)
   workflow_dispatch:
 
 concurrency:
@@ -12,7 +12,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 170
+    timeout-minutes: 110
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

@@ -249,7 +249,7 @@ def shop_products_6h(conn, limit: int) -> list[tuple[str, str]]:
             " left join tiktok_watch.shop_product_scores v using (product_id)"
             " where not p.hidden and p.retired_at is null and p.url is not null and p.last_seen > now() - interval '14 days'"
             "   and (p.starred or p.niche is not null)"
-            "   and (p.page_checked_at is null or p.page_checked_at < now() - interval '150 minutes')"
+            "   and (p.page_checked_at is null or p.page_checked_at < now() - interval '5 hours')"
             " order by p.starred desc, (coalesce(v.sold_per_day, 0) >= 20) desc, p.page_checked_at asc nulls first limit %s",
             (limit,),
         )

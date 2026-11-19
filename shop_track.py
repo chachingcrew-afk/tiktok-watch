@@ -1,4 +1,4 @@
-"""3-hourly sales check of every TikTok Shop product in the price band (and starred ones).
+"""6-hourly sales check of every TikTok Shop product in the price band (and starred ones).
 
 The daily shop scan (shop.py) finds products and reads every promising product page once a day.
 Between those runs this job re-reads the product pages of all of them, starred and fastest
