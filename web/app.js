@@ -201,8 +201,9 @@
     if (focus !== P.focus) { P.focus = focus; P.page = 0; P.cat = ""; P.found = null; P.q = ""; $("q").value = ""; if (state.shop.length) { renderKpis(); renderSeg(); renderCats(); renderTypes(); renderTable(); } }
     $("products-title").textContent = focus ? "Női ruha" : "Termékek";
     $("products-sub").textContent = focus ? `Női ruházat a TikTok Shopról, $${fsetting("fashion_min_price")}–${fsetting("fashion_max_price")} között, ismert márkák nélkül. Naponta bővül.` : "TikTok Shop termékek a beállított ársávban, napi eladás és bevétel szerint.";
+    const navV = v === "women" ? "products" : v;  // women's clothing is a category of Termékek now, not a menu item
     for (const b of document.querySelectorAll(".nav-item")) {
-      if (b.dataset.view === v) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+      if (b.dataset.view === navV) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
     }
     for (const s of ["products", "mine", "kits", "videos", "runs", "settings"]) $("view-" + s).hidden = s !== (v === "women" ? "products" : v);
     store.set("view", v);
@@ -381,10 +382,13 @@
     if (P.focus) {
       const tc = new Map();
       for (const p of state.shop) if (inView(p) && !p.hidden) { const [k] = wtype(p); tc.set(k, (tc.get(k) || 0) + 1); }
-      $("cat").replaceChildren(el("option", { value: "" }, "Minden típus"),
-        ...[...WTYPES.map(([k, l]) => [k, l]), ["other", "Egyéb"]].filter(([k]) => tc.get(k)).map(([k, l]) => el("option", { value: "t:" + k }, `${l} (${tc.get(k)})`)));
-    } else
-    $("cat").replaceChildren(el("option", { value: "" }, "Minden kategória"), ...opts.map(([id, c]) => el("option", { value: id }, `${c.name} (${c.n})`)));
+      $("cat").replaceChildren(el("option", { value: "__all" }, "Minden kategória"), el("option", { value: "" }, "Női ruha: minden típus"),
+        ...[...WTYPES.map(([k, l]) => [k, l]), ["other", "Egyéb"]].filter(([k]) => tc.get(k)).map(([k, l]) => el("option", { value: "t:" + k }, `Női ruha: ${l} (${tc.get(k)})`)));
+    } else {
+      const nWomen = state.shop.filter(p => p.focus === "women" && !p.hidden).length;
+      $("cat").replaceChildren(el("option", { value: "" }, "Minden kategória"), el("option", { value: "__women" }, `Női ruha (${nf(nWomen)})`),
+        ...opts.map(([id, c]) => el("option", { value: id }, `${c.name} (${c.n})`)));
+    }
     $("cat").value = P.cat;
     $("pmin").placeholder = "Ár min " + priceMin(); $("pmax").placeholder = "max " + priceMax();
     $("sort").value = P.sort;
@@ -496,7 +500,12 @@
     if (P.found) n.textContent = `Keresés az összes termékben („${P.q.trim()}”): ${nf(P.found.length)} találat, ársávtól és szűrőktől függetlenül.`;
     else selectView(store.get("view") || "products", true);
   }
-  $("cat").addEventListener("change", () => { P.cat = $("cat").value; P.page = 0; renderTypes(); renderTable(); });
+  $("cat").addEventListener("change", () => {
+    const v = $("cat").value;
+    if (v === "__women") { selectView("women"); return; }
+    if (v === "__all") { selectView("products"); return; }
+    P.cat = v; P.page = 0; renderTypes(); renderTable();
+  });
   $("sort").addEventListener("change", () => { P.sort = $("sort").value; store.set("sort", P.sort); renderTable(); });
   for (const id of ["pmin", "pmax"]) $(id).addEventListener("change", () => {
     const v = $(id).value.trim();
