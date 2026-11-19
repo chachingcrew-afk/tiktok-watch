@@ -162,7 +162,7 @@
   const P = { focus: null, niche: store.get("niche") || "", per: store.get("per") || "day", dir: store.get("dir") || "desc", seg: store.get("seg") || "all", sort: store.get("sort") || "revenue_per_day", q: "", cat: "", pmin: null, pmax: null, page: 0, sel: null };
   const V = { seg: "tracking", sort: "recent_views_per_hour", q: "" };
   const PAGE = 50;
-  const cache = { thumbs: {}, gallery: {}, galurls: {}, videos: {}, hist: {}, reviews: {} };
+  const cache = { thumbs: {}, gallery: {}, galurls: {}, videos: {}, hist: {}, reviews: {}, pcomments: {} };
 
   async function startApp(session) {
     show("app");
@@ -679,7 +679,30 @@
         periodSection(cache.hist[id], Number(p.price) || 0),
         el("div", { class: "d-note" }, "A bevétel a mostani ár és a napi eladott darab szorzata, a TikTok Shop eladásszámából. A növekedés: a napi eladás az addig eladott darabok hány százaléka.")),
       videosSection(p),
+      commentsSection(p),
       reviewsSection(p));
+  }
+  // relevant comments of the product's creator videos (hourly job, best sellers first)
+  function commentsSection(p) {
+    const id = p.product_id;
+    ensure("pcomments", id, () => rpc("tr_product_comments", { pid: id }));
+    const r = cache.pcomments[id];
+    let body;
+    if (r === undefined || r === null) body = el("div", { class: "d-note" }, "Betöltés…");
+    else if (r === false) body = el("div", { class: "d-note" }, "Nem sikerült betölteni a kommenteket.");
+    else {
+      const cm = r.comments || [];
+      if (!cm.length) body = el("div", { class: "d-note" }, r.at ? "A videók kommentjei között nem volt releváns (vásárlási szándék, méret, anyag, ár…)."
+        : Number(r.videos) ? "Még nincs lekérve. Óránként kb. 35 termék kommentjeit gyűjti, a legjobban fogyóktól kezdve." : "Ehhez a termékhez még nincs creator videó, így kommentek sincsenek.");
+      else body = el("div", { class: "kit-comments" }, ...CTAGS.map(([key, hu]) => {
+        const xs = cm.filter(c => (c.tags || []).includes(key));
+        if (!xs.length) return null;
+        return el("details", { open: key === "intent" ? "" : null }, el("summary", {}, `${hu} (${xs.length})`),
+          el("ul", {}, ...xs.slice(0, 40).map(c => el("li", {}, String(c.text || ""), c.likes ? el("span", { class: "muted" }, ` · ${nf(c.likes)} ♥`) : null))));
+      }));
+    }
+    const n = r && r.comments ? r.comments.length : 0;
+    return el("div", { class: "d-sec" }, el("h3", {}, "Kommentek a videók alatt", el("span", {}, n ? `${nf(n)} releváns` + (r.at ? " · " + ago(r.at) : "") : "")), body);
   }
   function storeNote(p) {
     const st = p.seller_id && (state.storeById || (state.storeById = Object.fromEntries((state.stores || []).map(x => [x.seller_id, x]))))[p.seller_id];

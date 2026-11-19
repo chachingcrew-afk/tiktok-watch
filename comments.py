@@ -5,12 +5,18 @@ REFRESH_DAYS), read the comments of its most played creator videos with the same
 session the video collector uses, and keep only the comments that show buying intent or a buyer's
 question, worry or experience (size, material, price, shipping, colours, where else to buy).
 Small talk ("so pretty", emojis) is dropped.
+
+With --products (hourly workflow) it does the same for the products of the Termékek list, best sellers
+first (revenue per day), PRODUCTS_PER_RUN at a time within TIME_BUDGET_S, using the creator videos the
+video collector stored for each product (shop_product_videos). State: tiktok_watch.product_comment_state.
 """
 from __future__ import annotations
 
 import asyncio
 import os
 import random
+import sys
+import time
 from collections import Counter
 from datetime import datetime, timezone
 
@@ -25,6 +31,37 @@ REFRESH_DAYS = int(os.environ.get("COMMENT_REFRESH_DAYS", "7"))
 PAUSE = (4.0, 8.0)          # seconds between two videos: a calm pace, TikTok answers empty when asked too fast
 STOP_AFTER_EMPTY = 2        # this many empty answers in a row: stop the kit, the rest is retried on the next run
 MAX_TRIES = 4               # runs that may retry a kit's missing videos
+PRODUCTS_PER_RUN = int(os.environ.get("COMMENT_PRODUCTS", "35"))
+PRODUCT_REFRESH_DAYS = int(os.environ.get("COMMENT_PRODUCT_REFRESH_DAYS", "14"))
+TIME_BUDGET_S = int(os.environ.get("COMMENT_TIME_BUDGET_S", "2700"))   # stop starting new products after this
+
+
+def products_due(conn) -> list[tuple[str, list]]:
+    """Listed products with creator videos and no (or old, or unfinished) comments, best sellers first."""
+    with conn.cursor() as cur:
+        cur.execute("""select l.product_id,
+                              (select jsonb_agg(jsonb_build_object('item_id', v.item_id, 'plays', v.play_count) order by v.play_count desc nulls last)
+                                 from tiktok_watch.shop_product_videos v where v.product_id = l.product_id)
+                       from tiktok_watch.listed_ids() l
+                       left join tiktok_watch.product_comment_state s using (product_id)
+                       where exists (select 1 from tiktok_watch.shop_product_videos v where v.product_id = l.product_id)
+                         and (s.comments_at is null or s.comments_at < now() - make_interval(days => %s)
+                              or (coalesce((s.stats->>'pending')::int, 0) > 0 and coalesce((s.stats->>'tries')::int, 0) < %s))
+                       order by (s.comments_at is not null), l.ord limit %s""", (PRODUCT_REFRESH_DAYS, MAX_TRIES, PRODUCTS_PER_RUN))
+        return cur.fetchall()
+
+
+def product_stats(conn, pid: str) -> dict:
+    with conn.cursor() as cur:
+        cur.execute("select stats from tiktok_watch.product_comment_state where product_id = %s", (pid,))
+        row = cur.fetchone()
+    return (row and row[0]) or {}
+
+
+def save_product_state(conn, pid: str, summary: dict) -> None:
+    with conn.cursor() as cur:
+        cur.execute("""insert into tiktok_watch.product_comment_state (product_id, comments_at, stats) values (%s, now(), %s)
+                       on conflict (product_id) do update set comments_at = now(), stats = excluded.stats""", (pid, db.Jsonb(summary)))
 
 def kits_due(conn) -> list[tuple[str, list]]:
     with conn.cursor() as cur:
@@ -52,9 +89,9 @@ def save(conn, pid: str, video_id: str, kept: list[dict]) -> None:
                         (c["id"], pid, video_id, c["text"], c["likes"], c["replies"], c["created_at"], c["lang"], c["tags"]))
 
 
-async def one_kit(api, conn, pid: str, videos: list, stats: Counter) -> dict:
+async def one_kit(api, conn, pid: str, videos: list, stats: Counter, products: bool = False) -> dict:
     vids = sorted([v for v in videos or [] if v.get("item_id")], key=lambda v: -(v.get("plays") or 0))[:VIDEOS_PER_KIT]
-    prev = kit_stats(conn, pid)
+    prev = product_stats(conn, pid) if products else kit_stats(conn, pid)
     done = set(prev.get("done") or [])
     seen, kept_n = int(prev.get("seen") or 0), int(prev.get("kept") or 0)
     by_tag: Counter = Counter(prev.get("by_tag") or {})
@@ -99,9 +136,12 @@ async def one_kit(api, conn, pid: str, videos: list, stats: Counter) -> dict:
                "seen": seen, "kept": kept_n, "by_tag": dict(by_tag), "errors": errors[:5]}
     if stopped:
         stats["kits_paused"] += 1
-    with conn.cursor() as cur:
-        cur.execute("update tiktok_watch.kits set comments_at = now(), comments_stats = %s where product_id = %s and deleted_at is null",
-                    (db.Jsonb(summary), pid))
+    if products:
+        save_product_state(conn, pid, summary)
+    else:
+        with conn.cursor() as cur:
+            cur.execute("update tiktok_watch.kits set comments_at = now(), comments_stats = %s where product_id = %s and deleted_at is null",
+                        (db.Jsonb(summary), pid))
     conn.commit()
     stats["kits"] += 1
     stats["videos_left"] += pending
@@ -111,16 +151,22 @@ async def one_kit(api, conn, pid: str, videos: list, stats: Counter) -> dict:
 async def main() -> None:
     setup_logging()
     conn = db.connect()
-    rid = db.start_run(conn, "comments")
+    products = "--products" in sys.argv
+    rid = db.start_run(conn, "comments_products" if products else "comments")
     stats: Counter = Counter()
+    start = time.monotonic()
     try:
-        todo = kits_due(conn)
+        todo = products_due(conn) if products else kits_due(conn)
+        stats["due"] = len(todo)
         if todo:
             async with tiktok_session() as (api, _):
                 paused_in_row = 0
                 for pid, videos in todo:
+                    if time.monotonic() - start > TIME_BUDGET_S:
+                        stats["out_of_time"] = 1
+                        break
                     before = stats["kits_paused"]
-                    await one_kit(api, conn, pid, videos, stats)
+                    await one_kit(api, conn, pid, videos, stats, products)
                     paused_in_row = paused_in_row + 1 if stats["kits_paused"] > before else 0
                     if paused_in_row >= 3:   # TikTok keeps answering empty: stop for today, the next run continues
                         stats["stopped_early"] = 1
