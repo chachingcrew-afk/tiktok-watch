@@ -1,0 +1,4 @@
+-- 2026-11-19: migration video_comments.
+-- tiktok_watch.video_comments: only the relevant comments (comment_filter.py tags: intent, size, material,
+-- price, color, owner, dupe) of each product kit's most played creator videos, filled by comments.py
+-- (.github/workflows/comments.yml, manual runs). kits.comments_at / comments_stats; tr_kit_comments(pid); tr_kits adds counts.
