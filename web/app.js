@@ -159,7 +159,7 @@
 
   // ---------- state ----------
   let state = { shop: [], videos: [], history: {}, runs: [], settings: {} };
-  const P = { focus: null, niche: store.get("niche") || "", per: store.get("per") || "day", seg: store.get("seg") || "all", sort: store.get("sort") || "revenue_per_day", q: "", cat: "", pmin: null, pmax: null, page: 0, sel: null };
+  const P = { focus: null, niche: store.get("niche") || "", per: store.get("per") || "day", dir: store.get("dir") || "desc", seg: store.get("seg") || "all", sort: store.get("sort") || "revenue_per_day", q: "", cat: "", pmin: null, pmax: null, page: 0, sel: null };
   const V = { seg: "tracking", sort: "recent_views_per_hour", q: "" };
   const PAGE = 50;
   const cache = { thumbs: {}, gallery: {}, galurls: {}, videos: {}, hist: {}, reviews: {} };
@@ -178,7 +178,7 @@
       const keepVideos = state.videos, keepHistory = state.history;
       state = await rpc("tr_load_lite");
       const lite = state.shop_lite || { k: [], r: [] }, st = new Set(state.starred || []), hd = new Set(state.hidden || []);
-      state.shop = lite.r.map(row => { const o = {}; lite.k.forEach((k, i) => { o[k] = row[i]; }); o.starred = st.has(o.product_id); o.hidden = hd.has(o.product_id); return o; });
+      state.shop = lite.r.map(row => { const o = {}; lite.k.forEach((k, i) => { o[k] = row[i]; }); o.starred = st.has(o.product_id); o.hidden = hd.has(o.product_id); return derive(o); });
       delete state.shop_lite;
       state.videos = keepVideos || []; state.history = keepHistory || {}; state.storeById = null;
       state.runs = state.runs || []; state.settings = state.settings || {};
@@ -340,16 +340,31 @@
       return true;
     };
   }
+  // sort keys computed from the 14-day sparkline: change of the last 4 days vs the 7 before, units sold in the last 7 days
+  function derive(p) {
+    const s = Array.isArray(p.spark) ? p.spark : null;
+    const avg = (a) => { const x = a.filter(v => v != null); return x.length ? x.reduce((t, v) => t + v, 0) / x.length : null; };
+    if (s && s.filter(v => v != null).length >= 3) {
+      const recent = avg(s.slice(-4)), before = avg(s.slice(-11, -4));
+      p.spark_recent = recent; p.spark_before = before;
+      p.spark_chg = before ? (recent - before) / before * 100 : recent > 0 ? 999 : null;
+      p.sold_7d = s.slice(-7).filter(v => v != null).reduce((t, v) => t + v, 0);
+    }
+    return p;
+  }
   function rows() {
     if (P.found) return P.found.slice();
     const q = P.q.trim().toLowerCase();
     let list = state.shop.filter(segFilter(P.seg));
     if (P.cat) list = list.filter(p => P.cat.startsWith("t:") ? wtype(p)[0] === P.cat.slice(2) : p.category_id === P.cat);
     if (q) list = list.filter(p => [p.title, p.shop_name, p.category_name].some(s => (s || "").toLowerCase().includes(q)));
+    const dir = P.dir === "asc" ? -1 : 1;
+    if (P.sort === "title") return list.sort((a, b) => dir * -String(a.title || "").localeCompare(String(b.title || ""), "en", { sensitivity: "base" }));
     const key = (p) => P.sort === "first_seen" ? new Date(p.first_seen).getTime() : Number(p[P.sort] ?? NaN);
     return list.sort((a, b) => {
       const x = key(a), y = key(b);
-      return ((isNaN(y) ? -Infinity : y) - (isNaN(x) ? -Infinity : x)) || (Number(b.sold_now) || 0) - (Number(a.sold_now) || 0);
+      if (isNaN(x) !== isNaN(y)) return isNaN(x) ? 1 : -1;  // no data: always last
+      return dir * ((isNaN(y) ? 0 : y) - (isNaN(x) ? 0 : x)) || (Number(b.sold_now) || 0) - (Number(a.sold_now) || 0);
     });
   }
 
@@ -485,7 +500,11 @@
       onclick: (e) => { e.stopPropagation(); onToggle(p); } }, p.starred ? "★" : "☆");
   }
   function renderTable() {
-    for (const th of document.querySelectorAll("#ptable th.sortable")) th.toggleAttribute("aria-sort", th.dataset.sort === P.sort);
+    for (const th of document.querySelectorAll("#ptable th.sortable")) {
+      if (th.dataset.sort === P.sort) th.setAttribute("aria-sort", P.dir === "asc" ? "ascending" : "descending"); else th.removeAttribute("aria-sort");
+    }
+    $("dir").textContent = P.dir === "asc" ? "↑" : "↓";
+    $("dir").setAttribute("aria-label", P.dir === "asc" ? "Növekvő sorrend (kattints a csökkenőhöz)" : "Csökkenő sorrend (kattints a növekvőhöz)");
     const list = rows();
     const pages = Math.max(1, Math.ceil(list.length / PAGE));
     P.page = Math.min(P.page, pages - 1);
@@ -545,7 +564,7 @@
         const res = await rpc("tr_search", { p_q: q }) || [];
         if (seq !== searchSeq) return;
         const byId = new Map(state.shop.map(p => [p.product_id, p]));
-        P.found = res.map(r => { const have = byId.get(r.product_id); if (have) return have; state.shop.push(r); return r; });
+        P.found = res.map(r => { const have = byId.get(r.product_id); if (have) return have; derive(r); state.shop.push(r); return r; });
         brandCache = new WeakMap();
       } catch (e) { banner(errText(e), true); P.found = null; }
       renderSearchNote(); renderTable();
@@ -560,13 +579,18 @@
     const v = $("cat").value;
     P.cat = v; P.page = 0; renderTypes(); renderTable();
   });
-  $("sort").addEventListener("change", () => { P.sort = $("sort").value; store.set("sort", P.sort); renderTable(); });
+  const setSort = (k, dir) => { P.sort = k; P.dir = dir; P.page = 0; $("sort").value = k; store.set("sort", k); store.set("dir", dir); renderTable(); };
+  $("sort").addEventListener("change", () => setSort($("sort").value, $("sort").value === "title" ? "asc" : "desc"));
+  $("dir").addEventListener("click", () => setSort(P.sort, P.dir === "asc" ? "desc" : "asc"));
   for (const id of ["pmin", "pmax"]) $(id).addEventListener("change", () => {
     const v = $(id).value.trim();
     P[id] = v === "" ? null : Number(v);
     P.page = 0; renderKpis(); renderSeg(); renderTable();
   });
-  for (const th of document.querySelectorAll("#ptable th.sortable")) th.addEventListener("click", () => { P.sort = th.dataset.sort; $("sort").value = P.sort; store.set("sort", P.sort); renderTable(); });
+  for (const th of document.querySelectorAll("#ptable th.sortable")) th.addEventListener("click", () => {
+    const k = th.dataset.sort;
+    setSort(k, k === P.sort ? (P.dir === "asc" ? "desc" : "asc") : k === "title" ? "asc" : "desc");
+  });
 
   async function toggleProductStar(p) {
     const next = !p.starred; p.starred = next; renderSeg(); renderTable(); if (P.sel === p.product_id) renderDrawer();
@@ -652,7 +676,7 @@
           stat(p.trend != null ? "×" + dec(p.trend) : "–", "tempó az előző naphoz", Number(p.trend) > 1.2 ? "heat" : ""),
           stat(p.sold_per_day_week != null ? "+" + nf(p.sold_per_day_week) : "–", "napi átlag a héten")),
         salesChart(cache.hist[id]),
-        periodSection(cache.hist[id]),
+        periodSection(cache.hist[id], Number(p.price) || 0),
         el("div", { class: "d-note" }, "A bevétel a mostani ár és a napi eladott darab szorzata, a TikTok Shop eladásszámából. A növekedés: a napi eladás az addig eladott darabok hány százaléka.")),
       videosSection(p),
       reviewsSection(p));
@@ -963,7 +987,7 @@
       return [HU_MON[mo] + (mo === 0 ? " " + y : ""), a.v, a.n < len];
     });
   }
-  function barChart(buckets, color, emptyText) {
+  function barChart(buckets, color, emptyText, price) {
     const w = 600, h = 170, L = 50, R = 10, T = 10, B = 24;
     const svg = svgEl("svg", { viewBox: `0 0 ${w} ${h}`, class: "chart", role: "img" });
     if (!buckets.length) {
@@ -977,19 +1001,39 @@
     }
     const slot = (w - L - R) / buckets.length, bw = Math.max(2, Math.min(40, slot * 0.7));
     const every = Math.ceil(buckets.length / 8);
+    const bars = [];
     buckets.forEach(([label, v, partial], i) => {
       const x = L + i * slot + (slot - bw) / 2, top = sy(v);
       const r = svgEl("rect", { x: x.toFixed(1), y: top.toFixed(1), width: bw.toFixed(1), height: Math.max(0, h - B - top).toFixed(1), rx: Math.min(4, bw / 3), fill: color, opacity: partial ? .4 : .9 });
-      const tip = svgEl("title", {}); tip.textContent = `${label}: ${nf(Math.round(v))} db${partial ? " (még nem teljes)" : ""}`; r.append(tip); svg.append(r);
+      svg.append(r); bars.push(r);
+      // the whole column is the hover target, so thin bars are easy to hit
+      const hit = svgEl("rect", { x: (L + i * slot).toFixed(1), y: T, width: slot.toFixed(1), height: h - T - B, fill: "transparent", "data-i": i, class: "bar-hit" });
+      svg.append(hit);
       if (i % every === 0 || i === buckets.length - 1) {
         if (i !== buckets.length - 1 && buckets.length - 1 - i < every) return;
         const t = svgEl("text", { x: x + bw / 2, y: h - 6, "text-anchor": "middle", fill: "var(--muted)", "font-size": 11 }); t.textContent = label.replace(" hete", ""); svg.append(t);
       }
     });
     svg.setAttribute("aria-label", "Eladott darab időszakonként: " + buckets.map(b => `${b[0]} ${Math.round(b[1])}`).join(", "));
-    return svg;
+    const tip = el("div", { class: "bar-tip", hidden: true });
+    const box = el("div", { class: "bar-wrap" }, svg, tip);
+    const show = (i) => {
+      const [label, v, partial] = buckets[i];
+      bars.forEach((b, j) => b.setAttribute("opacity", j === i ? 1 : (buckets[j][2] ? .3 : .55)));
+      tip.replaceChildren(el("b", {}, label), el("span", {}, `${nf(Math.round(v))} db eladva`),
+        price ? el("span", {}, `≈ ${money(Math.round(v * price))} bevétel`) : null, partial ? el("em", {}, "még nem teljes időszak") : null);
+      tip.hidden = false;
+      const sw = box.clientWidth / w, cx = (L + (i + .5) * slot) * sw;
+      tip.style.left = Math.min(Math.max(cx, 70), box.clientWidth - 70) + "px";
+      tip.style.top = Math.max(0, sy(v) * (box.clientHeight / h) - 8) + "px";
+    };
+    const hide = () => { tip.hidden = true; bars.forEach((b, j) => b.setAttribute("opacity", buckets[j][2] ? .4 : .9)); };
+    svg.addEventListener("mouseover", (e) => { const i = e.target.getAttribute && e.target.getAttribute("data-i"); if (i != null) show(Number(i)); });
+    svg.addEventListener("click", (e) => { const i = e.target.getAttribute && e.target.getAttribute("data-i"); if (i != null) show(Number(i)); });
+    svg.addEventListener("mouseleave", hide);
+    return box;
   }
-  function periodSection(pts) {
+  function periodSection(pts, price) {
     const PER = [["day", "Napi"], ["week", "Heti"], ["month", "Havi"]];
     const daily = dailySales(pts), today = Math.floor(Date.now() / 864e5);
     const full = daily.filter(([d]) => d < today), sum = (a) => a.reduce((s, x) => s + x[1], 0);
@@ -1005,7 +1049,7 @@
         el("div", { class: "seg-mini", role: "tablist" }, ...PER.map(([k, l]) => el("button", { type: "button", role: "tab", "aria-selected": String(P.per === k),
           onclick: () => { P.per = k; store.set("per", k); renderDrawer(); } }, l)))),
       pts === undefined || pts === null ? barChart([], "var(--blue)", "Betöltés…")
-        : barChart(periodBuckets(pts, P.per), "var(--blue)", "A napi bontás két különböző napi mérés után jelenik meg."),
+        : barChart(periodBuckets(pts, P.per), "var(--blue)", "A napi bontás két különböző napi mérés után jelenik meg.", price),
       cmp);
   }
   // 14-day daily sales sparkline for the list (oldest first, null = no reading that day)
@@ -1014,8 +1058,7 @@
     const vals = s ? s.filter(v => v != null) : [];
     if (vals.length < 3) return el("span", { class: "na" }, "–");
     const w = 104, h = 30, max = Math.max(1, ...vals), n = s.length;
-    const avg = (a) => { const x = a.filter(v => v != null); return x.length ? x.reduce((t, v) => t + v, 0) / x.length : null; };
-    const recent = avg(s.slice(-4)), before = avg(s.slice(-11, -4));
+    const recent = p.spark_recent, before = p.spark_before;
     const dir = recent == null || before == null ? 0 : before === 0 ? (recent > 0 ? 1 : 0) : recent / before >= 1.15 ? 1 : recent / before <= 0.85 ? -1 : 0;
     const color = dir > 0 ? "var(--money)" : dir < 0 ? "var(--danger, #dc2626)" : "var(--faint)";
     const svg = svgEl("svg", { viewBox: `0 0 ${w} ${h}`, class: "spark", role: "img" });
@@ -1181,7 +1224,6 @@
           el("label", { title: "Hány oldalt töltsön be kategóriánként (egy oldal kb. 20 termék)" }, "Oldal", el("input", { type: "number", id: `n-${n.key}-loads`, min: 0, max: 60, value: n.loads })),
           el("div", { class: "niche-cats" }, ...[...(n.cats || []), ...(n.deep || [])].map(c => el("span", { class: "tag" }, catLabel(c), catStats[c] ? el("em", {}, catStats[c].in_range || 0) : null)))))),
         el("div", { class: "row" }, numField("shop_min_revenue_day"), numField("shop_track_min_sold"), numField("hot_video_days")),
-        el("div", { class: "row" }, numField("retire_below_per_day")),
         tagEditor("brands", brands, "Ismert márkák", "Ezeknek a termékei „Márkás” jelölést kapnak és kimaradnak a listákból (ha a terméknév ezzel kezdődik, vagy a bolt neve ez).",
           "pl. VEVOR", (x) => x.slice(0, 40), (b) => b)),
       el("div", { class: "card" }, el("h2", {}, "Videógyűjtés: hol keressen"), el("p", {}, "Ezeknek a hashtageknek a friss videóit nézi át minden reggel."),

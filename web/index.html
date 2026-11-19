@@ -131,15 +131,24 @@
           <select id="sort" aria-label="Rendezés">
             <option value="revenue_per_day">Napi bevétel</option>
             <option value="sold_per_day">Napi eladás</option>
+            <option value="spark_chg">Trend (14 nap) %</option>
+            <option value="sold_7d">Eladás az utolsó 7 napban</option>
             <option value="growth_pct">Növekedés %</option>
             <option value="trend">Gyorsulás</option>
             <option value="sold_per_day_recent">Mostani tempó</option>
+            <option value="sold_per_day_week">Heti napi átlag</option>
             <option value="sold_now">Összes eladás</option>
             <option value="video_views">Videók nézettsége</option>
+            <option value="video_count">Videók száma</option>
+            <option value="fresh_videos">Friss videók</option>
+            <option value="other_shops">Boltok száma</option>
             <option value="price">Ár</option>
             <option value="rating">Értékelés</option>
+            <option value="reviews">Vélemények száma</option>
             <option value="first_seen">Legújabb</option>
+            <option value="title">Név (A–Z)</option>
           </select>
+          <button type="button" class="btn dir-btn" id="dir" aria-label="Csökkenő sorrend">↓</button>
         </div>
       </div>
 
@@ -150,10 +159,10 @@
           <table class="ptable" id="ptable">
             <thead><tr>
               <th class="c-star" aria-label="Csillag"></th>
-              <th class="c-prod">Termék</th>
+              <th class="c-prod sortable" data-sort="title">Termék</th>
               <th class="r sortable" data-sort="price">Ár</th>
               <th class="r sortable" data-sort="sold_per_day">Napi eladás</th>
-              <th class="c-spark" title="Napi eladás az elmúlt 14 napban">Trend, 14 nap</th>
+              <th class="c-spark sortable" data-sort="spark_chg" title="Napi eladás az elmúlt 14 napban. Rendezés: az utolsó 4 nap átlaga az előtte lévő 7 naphoz képest">Trend, 14 nap</th>
               <th class="r sortable" data-sort="revenue_per_day">Napi bevétel</th>
               <th class="r sortable" data-sort="growth_pct" title="A napi eladás az eddig eladott darabok hány százaléka">Növekedés</th>
               <th class="r sortable" data-sort="rating">Értékelés</th>

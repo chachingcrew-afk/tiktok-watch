@@ -1,9 +1,8 @@
-name: Check TikTok Shop sales (every 6 hours)
+name: Check TikTok Shop sales (every 3 hours)
 
 on:
   schedule:
-    # 00:41, 12:41 and 18:41 UTC; the 06:xx slot is covered by the daily shop scan
-    - cron: '41 0,12,18 * * *'
+    - cron: '41 */3 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -13,7 +12,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -26,3 +25,4 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           PROXY_URL: ${{ secrets.PROXY_URL }}
           SHOP_CONCURRENCY: '16'
+          SHOP_PAGE_BUDGET_S: '2700'

@@ -1,4 +1,4 @@
-"""6-hourly sales check of every TikTok Shop product in the price band (and starred ones).
+"""3-hourly sales check of every TikTok Shop product in the price band (and starred ones).
 
 The daily shop scan (shop.py) finds products and reads every promising product page once a day.
 Between those runs this job re-reads the product pages of all of them, starred and fastest
@@ -32,7 +32,6 @@ async def main() -> None:
         todo = db.shop_products_6h(conn, LIMIT)
         shop.STATS["selected"] = len(todo)
         await shop.read_pages(conn, proxies, todo)
-        shop.STATS["retired"] += db.retire_slow(conn)
     except BaseException as e:
         db.finish_run(conn, run_id, False, {**shop.STATS, **netstats.summary()}, str(e))
         raise

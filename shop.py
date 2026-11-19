@@ -283,7 +283,6 @@ async def main() -> None:
             STATS["stores_failed"] += 1
             log.warning("Store step failed: %s", e)
         await refresh_missing(cfg, conn, proxies, seen)
-        STATS["retired"] += db.retire_slow(conn)
         try:
             await asyncio.to_thread(gallery.run, conn, cfg.shop_track_min_sold, proxies, STATS)
         except Exception as e:  # images are a convenience; never fail the scan because of them

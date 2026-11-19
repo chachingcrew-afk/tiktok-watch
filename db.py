@@ -249,7 +249,7 @@ def shop_products_6h(conn, limit: int) -> list[tuple[str, str]]:
             " left join tiktok_watch.shop_product_scores v using (product_id)"
             " where not p.hidden and p.retired_at is null and p.url is not null and p.last_seen > now() - interval '14 days'"
             "   and (p.starred or p.niche is not null)"
-            "   and (p.page_checked_at is null or p.page_checked_at < now() - interval '5 hours')"
+            "   and (p.page_checked_at is null or p.page_checked_at < now() - interval '150 minutes')"
             " order by p.starred desc, (coalesce(v.sold_per_day, 0) >= 20) desc, p.page_checked_at asc nulls first limit %s",
             (limit,),
         )
@@ -432,43 +432,6 @@ def _link_feed_product(conn, v: ParsedVideo, p: dict) -> None:
 
 
 # ---------- retiring slow products ----------
-
-def retire_slow(conn) -> int:
-    """Products whose measured daily sales stay under the 'retire_below_per_day' setting leave tracking:
-    their snapshots, images and creator videos are deleted, only the product row stays (marked retired)
-    so the daily scan does not add them again. Starred products and products with a creator video from
-    the last 7 days are kept. A retired product comes back when it starts selling again (see upsert_shop_product)."""
-    with conn.cursor() as cur:
-        cur.execute("select coalesce((select (value)::text::numeric from tiktok_watch.settings where key = 'retire_below_per_day'), 3)")
-        limit = cur.fetchone()[0]
-        if not limit or limit <= 0:
-            return 0
-        cur.execute(
-            """
-            select v.product_id, v.sold_now from tiktok_watch.shop_product_scores v
-            join tiktok_watch.shop_products p using (product_id)
-            where p.retired_at is null and not p.starred
-              and v.sold_per_day is not null and v.sold_per_day < %s
-              and not exists (select 1 from tiktok_watch.shop_product_videos pv where pv.product_id = v.product_id
-                              and pv.source = 'feed' and pv.upload_time > now() - interval '7 days')
-            """,
-            (limit,),
-        )
-        rows = cur.fetchall()
-        if not rows:
-            return 0
-        ids = [r[0] for r in rows]
-        cur.executemany(
-            "update tiktok_watch.shop_products set retired_at = now(), retired_sold = coalesce(%s, last_sold),"
-            " thumb = null, gallery_at = null, gallery_count = null, video_count = null, video_views = null,"
-            " video_likes = null, videos_checked_at = null, other_shops = null, twin_shops = null where product_id = %s",
-            [(sold, pid) for pid, sold in rows],
-        )
-        for table in ("shop_product_images", "shop_product_videos", "product_snapshots"):
-            cur.execute(f"delete from tiktok_watch.{table} where product_id = any(%s)", (ids,))
-    conn.commit()
-    return len(ids)
-
 
 # ---------- stores (stores.py) ----------
 

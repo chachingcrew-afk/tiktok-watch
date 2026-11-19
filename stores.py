@@ -4,7 +4,7 @@ Every day the stores of our good women's products are visited. A store page show
 units sold and its best sellers (sorted by units sold). From two visits we know how much the whole
 store sells per day; if that is far more than the products we already follow from it, the rest of its
 best sellers are added to tracking ($30-70, 8000+ sold, no known brands). The usual rules
-apply to them afterwards: measured every 6 hours, retired if they barely sell.
+apply to them afterwards: measured every 3 hours.
 """
 from __future__ import annotations
 
