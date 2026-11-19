@@ -82,7 +82,8 @@ svg { display: block; }
 .nav-item:hover, .nav-ext:hover { background: var(--sunken); color: var(--ink); }
 .nav-item[aria-current="page"] { background: var(--side-active); color: #1d4ed8; font-weight: 600; }
 .side-status { margin-top: auto; display: grid; gap: 6px; font-size: 12.5px; background: var(--bg); border-radius: 12px; padding: 12px; }
-.side-status div { display: flex; align-items: center; gap: 7px; }
+.side-status div { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 7px; color: var(--muted); }
+.side-status b { flex: 1 1 auto; }
 .side-status b { color: var(--ink); font-weight: 600; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: #9ca3af; flex: none; }
 .dot.ok { background: #12a150; } .dot.err { background: #dc2626; } .dot.run { background: #d97706; }
@@ -118,7 +119,7 @@ svg { display: block; }
 .search svg { width: 16px; height: 16px; fill: none; stroke: var(--faint); stroke-width: 2; flex: none; }
 .search input { border: 0; outline: 0; background: none; width: 100%; padding: 0; }
 .range { display: flex; align-items: center; gap: 4px; color: var(--faint); }
-.range input { width: 96px; }
+.range input { width: 112px; }
 
 /* table */
 .table-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
@@ -245,7 +246,8 @@ svg { display: block; }
 @media (max-width: 860px) {
   .app { grid-template-columns: minmax(0, 1fr); }
   .side { position: sticky; top: 0; height: auto; z-index: 30; flex-direction: row; align-items: center; padding: 10px max(12px, env(safe-area-inset-left)); gap: 10px; overflow-x: auto; }
-  .side .logo-row b, .side-status, .side-user span { display: none; }
+  .side .logo-row b, .side-status, .side-user span, .nav-group { display: none; }
+  .side { border-right: 0; border-bottom: 1px solid var(--line); }
   .side-nav { display: flex; gap: 2px; }
   .nav-item, .nav-ext { padding: 8px 9px; white-space: nowrap; }
   .side-user { border: 0; padding: 0; margin-left: auto; }
@@ -405,3 +407,27 @@ svg { display: block; }
 .kit-meta s { opacity: .6; margin-left: 4px; }
 .kit-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 @media (max-width: 640px) { .kit-add { flex-direction: column; } .kit-card { grid-template-columns: 72px minmax(0, 1fr); } .kit-card .mine-thumb { width: 72px; height: 72px; } .kit-vidn { margin-left: 0; } }
+
+/* Product table: fits its box, no sideways scroll. Fixed columns, product column takes the rest;
+   rating hides on narrower screens, and on phones each row becomes a card. */
+#ptable { min-width: 0; table-layout: fixed; }
+#ptable th:nth-child(1) { width: 64px; }
+#ptable th:nth-child(3) { width: 104px; }
+#ptable th:nth-child(4) { width: 132px; }
+#ptable th:nth-child(5) { width: 144px; }
+#ptable th:nth-child(6) { width: 128px; }
+#ptable th:nth-child(7) { width: 112px; }
+#ptable .ptitle { max-width: none; }
+#ptable td { overflow-wrap: anywhere; }
+@media (max-width: 1240px) {
+  #ptable th:nth-child(7), #ptable td:nth-child(7) { display: none; }
+}
+@media (max-width: 900px) {
+  #ptable, #ptable tbody { display: block; }
+  #ptable thead { display: none; }
+  #ptable tr { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); position: relative; }
+  #ptable td { display: block; padding: 0; border: 0; text-align: left; }
+  #ptable td.c-prod { grid-column: 1 / -1; padding-right: 48px; }
+  #ptable td.c-star { position: absolute; top: 12px; right: 12px; width: auto; }
+  #ptable td:nth-child(7) { display: none; }
+}

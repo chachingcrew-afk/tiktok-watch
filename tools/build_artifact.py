@@ -10,7 +10,7 @@ import sys
 
 WEB = pathlib.Path(__file__).resolve().parent.parent / "web"
 OWNER_ID = "cc3eacba-3ef9-4d71-8a63-88b3849c21f0"   # the owner's auth user id, so the tr_* guard lets the calls through
-SET_FUNCS = {"tr_gallery", "tr_thumbs"}               # set-returning functions
+SET_FUNCS = {"tr_gallery", "tr_thumbs", "tr_extra"}               # set-returning functions
 
 SHIM = r"""
 <script>

@@ -174,12 +174,18 @@
   async function load() {
     $("refresh").disabled = true; $("refresh").textContent = "Frissítés…";
     try {
-      state = await rpc("tr_load");
-      state.shop = state.shop || []; state.videos = state.videos || []; state.storeById = null; state.history = state.history || {};
+      // Slim list (columns + rows); images, links and drawer facts come per page (loadExtra), videos after first paint.
+      const keepVideos = state.videos, keepHistory = state.history;
+      state = await rpc("tr_load_lite");
+      const lite = state.shop_lite || { k: [], r: [] }, st = new Set(state.starred || []), hd = new Set(state.hidden || []);
+      state.shop = lite.r.map(row => { const o = {}; lite.k.forEach((k, i) => { o[k] = row[i]; }); o.starred = st.has(o.product_id); o.hidden = hd.has(o.product_id); return o; });
+      delete state.shop_lite;
+      state.videos = keepVideos || []; state.history = keepHistory || {}; state.storeById = null;
       state.runs = state.runs || []; state.settings = state.settings || {};
       brandCache = new WeakMap();
       banner(null);
       renderAll();
+      loadVideos();
     } catch (e) {
       if (e && e.code === "42501") { $("noaccess-text").textContent = `A(z) ${$("user-email").textContent} fióknak még nincs hozzáférése az adatokhoz. Szólj, és felveszem a jogosultak közé.`; show("noaccess"); return; }
       banner(errText(e), true, { label: "Újra", fn: load });
@@ -188,6 +194,28 @@
     }
   }
   $("refresh").addEventListener("click", load);
+
+  async function loadVideos() {
+    try {
+      const v = await rpc("tr_videos");
+      state.videos = (v && v.videos) || []; state.history = (v && v.history) || {};
+      renderVideos();
+    } catch (_) {}
+  }
+
+  // Per-page details the slim list leaves out: image, link, other sellers, drawer facts.
+  const extraDone = new Set();
+  async function loadExtra(ids) {
+    const need = ids.filter(id => !extraDone.has(id));
+    if (!need.length) return false;
+    need.forEach(id => extraDone.add(id));
+    try {
+      const rowsX = await rpc("tr_extra", { p_ids: need });
+      const byId = new Map(state.shop.map(p => [p.product_id, p]));
+      for (const r of rowsX || []) { const p = byId.get(r.product_id); if (p) Object.assign(p, r); }
+      return true;
+    } catch (_) { need.forEach(id => extraDone.delete(id)); return false; }
+  }
 
   function renderAll() {
     renderStatus(); renderKpis(); renderSeg(); renderCats(); renderTypes(); renderTable();
@@ -399,7 +427,8 @@
       if (cache.thumbs[p.product_id]) box.replaceChildren(el("img", { src: "data:image/webp;base64," + cache.thumbs[p.product_id], alt: "" }));
       else { box.replaceChildren("▢"); queueThumb(p.product_id, box); }
     };
-    if (p.image) {
+    if (cache.thumbs[p.product_id] && (size || 160) <= 160) fallback();  // small stored preview: instant, no CDN round trip
+    else if (p.image) {
       const i = el("img", { src: sized(p.image, size || 160), alt: "", loading: "lazy", referrerpolicy: "no-referrer" });
       i.addEventListener("error", fallback, { once: true });
       box.append(i);
@@ -440,9 +469,10 @@
     const slice = list.slice(P.page * PAGE, P.page * PAGE + PAGE);
     if (!slice.length) {
       const msg = state.shop.length ? ["Nincs találat", "Próbálj más szűrőt, kategóriát vagy keresőszót."] : ["Még nincs termék", "A reggeli termékkeresés után itt lesznek a TikTok Shop termékek."];
-      $("prows").replaceChildren(el("tr", {}, el("td", { colspan: 9, class: "empty" }, el("b", {}, msg[0]), msg[1])));
+      $("prows").replaceChildren(el("tr", {}, el("td", { colspan: 7, class: "empty" }, el("b", {}, msg[0]), msg[1])));
     } else {
       $("prows").replaceChildren(...slice.map((p, i) => productRow(p, P.page * PAGE + i + 1)));
+      loadExtra(slice.map(p => p.product_id)).then(got => { if (got) renderTable(); });
     }
     $("pager").replaceChildren(
       el("span", {}, list.length ? `${nf(P.page * PAGE + 1)}–${nf(Math.min(list.length, (P.page + 1) * PAGE))} / ${nf(list.length)} termék` : ""),
@@ -458,9 +488,13 @@
     if (isWin(p)) meta.push(el("span", { class: "chip money" }, "Nyerő"));
     if (isNew(p)) meta.push(el("span", { class: "chip blue" }, "Új"));
     meta.push(el("span", {}, [isWomen(p) ? wtype(p)[1] : p.category_name, p.shop_name].filter(Boolean).join(" · ")));
+    const facts = [p.sold_now != null ? short(p.sold_now) + " eladva" : null,
+      Number(p.video_views) > 0 ? short(p.video_views) + " videónézés" : null].filter(Boolean);
+    if (facts.length) meta.push(el("span", {}, facts.join(" · ")));
+    if (Number(p.fresh_videos) > 0) meta.push(el("span", { style: "color:var(--heat);font-weight:600" }, `${nf(p.fresh_videos)} friss videó`));
     const orig = p.price_original && Number(p.price_original) > Number(p.price) ? Number(p.price_original) : null;
     return el("tr", { class: P.sel === p.product_id ? "sel" : null, onclick: () => openProduct(p.product_id) },
-      el("td", { class: "c-star" }, starBtn(p, toggleProductStar)),
+      el("td", { class: "c-star", "data-l": "" }, starBtn(p, toggleProductStar)),
       el("td", { class: "c-prod" }, el("div", { class: "prod" }, img(p, 160),
         el("div", { style: "min-width:0" }, el("div", { class: "ptitle" }, p.title || "Névtelen termék"), el("div", { class: "pmeta" }, ...meta)))),
       el("td", { class: "r" }, el("div", { class: "big" }, usd(p.price)), orig ? el("div", { class: "small" }, el("s", {}, usd(orig))) : null),
@@ -469,9 +503,6 @@
       el("td", { class: "r" }, p.revenue_per_day != null ? el("div", { class: "big money" }, money(p.revenue_per_day)) : el("span", { class: "na" }, "–"),
         p.revenue_per_day != null ? el("div", { class: "small" }, "≈ " + money(Number(p.revenue_per_day) * 30) + "/hó") : null),
       el("td", { class: "r" }, p.growth_pct != null ? el("div", { class: "big" + (Number(p.growth_pct) >= 5 ? " pos" : "") }, "+" + pct(p.growth_pct)) : el("span", { class: "na" }, "–"), growthChip(p)),
-      el("td", { class: "r" }, el("div", { class: "big" }, short(p.sold_now)), el("div", { class: "small" }, "db")),
-      el("td", { class: "r" }, p.video_count || p.fresh_videos ? [el("div", { class: "big" }, short(p.video_views)),
-        Number(p.fresh_videos) > 0 ? el("div", { class: "small", style: "color:var(--heat);font-weight:600" }, `${nf(p.fresh_videos)} friss videó`) : el("div", { class: "small" }, `${nf(p.video_count)} videó, ${p.newest_video ? "legújabb " + ago(p.newest_video) : ""}`)] : el("span", { class: "na" }, "–")),
       el("td", { class: "r" }, p.rating ? [el("div", { class: "big" }, "★ " + dec(p.rating)), el("div", { class: "small" }, short(p.reviews) + " vél.")] : el("span", { class: "na" }, "–")));
   }
 
@@ -532,7 +563,7 @@
 
   // ---------- product drawer ----------
   let galIdx = 0;
-  function openProduct(id) { P.sel = id; galIdx = 0; $("drawer").hidden = false; $("scrim").hidden = false; document.body.style.overflow = "hidden"; renderDrawer(); renderTable(); $("drawer").scrollTop = 0; }
+  function openProduct(id) { loadExtra([id]).then(got => { if (got && P.sel === id) renderDrawer(); }); P.sel = id; galIdx = 0; $("drawer").hidden = false; $("scrim").hidden = false; document.body.style.overflow = "hidden"; renderDrawer(); renderTable(); $("drawer").scrollTop = 0; }
   function closeDrawer() { if (typeof MY !== "undefined") MY.edit = null; P.sel = null; $("drawer").hidden = true; $("scrim").hidden = true; document.body.style.overflow = ""; renderTable(); }
   $("scrim").addEventListener("click", closeDrawer);
   document.addEventListener("keydown", (e) => {
