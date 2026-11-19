@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
+from niches import DEFAULT_NICHES, clean as clean_niches
+
 
 def _env_int(name: str, default: int) -> int:
     try:
@@ -73,6 +75,9 @@ class Config:
     occasion_max_price: int = _env_int("OCCASION_MAX_PRICE", 90)
     occasion_fetches_per_category: int = _env_int("OCCASION_FETCHES_PER_CATEGORY", 40)
 
+    # Niches (niches.py): which category pages the shop scan reads and how products are grouped
+    niches: list[dict] = field(default_factory=lambda: [dict(n) for n in DEFAULT_NICHES])
+
     # Keys the dashboard may change, with their expected type
     EDITABLE = {
         "hashtags": list, "videos_per_hashtag": int, "include_trending": bool, "trending_count": int,
@@ -85,6 +90,7 @@ class Config:
         "fashion_fetches_per_category": int, "known_brands": "names",
         "occasion_categories": "categories", "occasion_open_categories": "categories",
         "occasion_min_price": int, "occasion_max_price": int, "occasion_fetches_per_category": int,
+        "niches": "niches",
     }
 
     def apply_overrides(self, values: dict) -> list[str]:
@@ -103,6 +109,11 @@ class Config:
                 if not cats:
                     continue
                 setattr(self, key, cats)
+            elif kind == "niches":
+                nn = clean_niches(value)
+                if not nn:
+                    continue
+                setattr(self, key, nn)
             elif kind == "names" and isinstance(value, list):
                 names = [str(x).strip()[:60] for x in value if str(x).strip()]
                 if not names:

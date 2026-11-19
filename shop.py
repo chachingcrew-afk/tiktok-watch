@@ -34,6 +34,7 @@ from session import setup_logging
 log = logging.getLogger("tiktok-watch")
 STATS: Counter = Counter()
 CATS: dict = {}
+NICHES: dict = {}  # per-niche counters of the category scan
 CONCURRENCY = int(os.environ.get("SHOP_CONCURRENCY", "6"))
 MAX_PRODUCT_PAGES = int(os.environ.get("SHOP_MAX_PRODUCT_PAGES", "800"))
 PAGE_BUDGET_S = int(os.environ.get("SHOP_PAGE_BUDGET_S", "1200"))  # at most 20 minutes of product pages per run
@@ -137,17 +138,16 @@ def is_occasion(title: str | None) -> bool:
 
 
 def groups(cfg) -> list[dict]:
-    """Category groups to scan: the general product categories, women's clothing (more loads,
-    own price band, known brands left out), and occasion dresses (deepest scan, widest price band)."""
-    g = [{"focus": None, "cats": cfg.shop_categories, "loads": cfg.shop_fetches_per_category,
-          "lo": cfg.shop_min_price, "hi": cfg.shop_max_price, "skip_brands": False, "stats": ""}]
-    if cfg.fashion_categories:
-        g.append({"focus": "women", "cats": cfg.fashion_categories, "loads": cfg.fashion_fetches_per_category,
-                  "lo": cfg.fashion_min_price, "hi": cfg.fashion_max_price, "skip_brands": True, "stats": "women_"})
-    if cfg.occasion_categories:
-        g.append({"focus": "women", "cats": cfg.occasion_categories, "loads": cfg.occasion_fetches_per_category,
-                  "lo": cfg.occasion_min_price, "hi": cfg.occasion_max_price, "skip_brands": True, "stats": "occasion_",
-                  "open": set(cfg.occasion_open_categories)})
+    """Category groups to scan, one per niche (see niches.py). The fashion niche also gets a deep scan of the
+    occasion dress categories, where open categories keep every dress and the mixed ones only occasion-looking titles."""
+    g = []
+    for n in cfg.niches:
+        focus = "women" if n["key"] == "fashion" else None
+        base = {"niche": n["key"], "focus": focus, "lo": n["min_price"], "hi": n["max_price"], "skip_brands": n["skip_brands"]}
+        if n["cats"] and n["loads"]:
+            g.append({**base, "cats": n["cats"], "loads": n["loads"]})
+        if n.get("deep") and n.get("deep_loads"):
+            g.append({**base, "cats": n["deep"], "loads": n["deep_loads"], "open": set(cfg.occasion_open_categories)})
     return g
 
 
@@ -165,16 +165,22 @@ async def scan_categories(cfg, conn, proxies) -> set[str]:
 
     kept: set[str] = set()
     brands = cfg.known_brands
+    pages: dict[tuple[str, int], object] = {}  # a category listed in two niches is fetched once
     for g in groups(cfg):
         jobs = [(c, n) for c in g["cats"] for n in range(g["loads"])]
+        todo = [j for j in jobs if j not in pages]
+        for (c, n), (_, res) in zip(todo, await asyncio.gather(*(one(c, n) for c, n in todo))):
+            pages[(c, n)] = res
+            if not isinstance(res, Exception):
+                CATS.setdefault(c, {"loads": 0, "products": 0, "in_range": 0})["loads"] += 1
         found: dict[str, dict] = {}
-        for cat, res in await asyncio.gather(*(one(c, n) for c, n in jobs)):
+        for (cat, _n) in jobs:
+            res = pages[(cat, _n)]
             info = CATS.setdefault(cat, {"loads": 0, "products": 0, "in_range": 0})
             if isinstance(res, Exception):
                 info["error"] = (type(res).__name__ + ": " + str(res))[:200]
                 STATS["category_errors"] += 1
                 continue
-            info["loads"] += 1
             name = category_name(res) or cat.split("/")[0].replace("-", " ").title()
             for p in parse_category_page(res):
                 info["products"] += 1
@@ -188,22 +194,24 @@ async def scan_categories(cfg, conn, proxies) -> set[str]:
                 return False
             # occasion group: open categories keep every dress, mixed ones only occasion-looking titles
             return "open" not in g or p.get("category_id") in open_ids or is_occasion(p.get("title"))
-        prefix = g["stats"]
+        ns = NICHES.setdefault(g["niche"], Counter())
         for p in found.values():
-            STATS[prefix + "seen"] += 1
+            STATS["seen"] += 1
+            ns["seen"] += 1
             if not ok(p):
-                STATS[prefix + "out_of_range"] += 1
+                ns["out_of_range"] += 1
                 continue
             if g["skip_brands"] and brand_of(p.get("title"), p.get("shop_name"), brands):
-                STATS[prefix + "brand_skipped"] += 1
+                ns["brand_skipped"] += 1
                 continue
-            p["focus"] = g["focus"]
+            p["focus"], p["niche"] = g["focus"], g["niche"]
             if not db.upsert_shop_product(conn, p):
-                STATS[prefix + "retired_skipped"] += 1  # barely sells: stays out until it picks up
+                ns["retired_skipped"] += 1  # barely sells: stays out until it picks up
                 continue
-            if p["sold"] is not None:
+            if p["sold"] is not None and p["product_id"] not in kept:
                 db.add_product_snapshot(conn, p["product_id"], p["sold"], p["price"], p["price"], "listing")
-            STATS[prefix + "in_range"] += 1
+            STATS["in_range"] += 1
+            ns["in_range"] += 1
             kept.add(p["product_id"])
         for cat in g["cats"]:
             if cat in CATS:
@@ -289,11 +297,11 @@ async def main() -> None:
             STATS["twins_failed"] += 1
             log.warning("Same-product step failed: %s", e)
     except BaseException as e:
-        db.finish_run(conn, run_id, False, {**STATS, **netstats.summary(), "categories": CATS}, str(e))
+        db.finish_run(conn, run_id, False, {**STATS, **netstats.summary(), "categories": CATS, "niches": NICHES}, str(e))
         raise
     log.info("Done. %s", dict(STATS))
-    ok = STATS["seen"] + STATS["women_seen"] > 0
-    db.finish_run(conn, run_id, ok, {**STATS, **netstats.summary(), "categories": CATS}, None if ok else "no products found in any category")
+    ok = STATS["seen"] > 0
+    db.finish_run(conn, run_id, ok, {**STATS, **netstats.summary(), "categories": CATS, "niches": NICHES}, None if ok else "no products found in any category")
     conn.close()
     if not ok:
         raise SystemExit("No products found. TikTok Shop may be blocking the category pages.")

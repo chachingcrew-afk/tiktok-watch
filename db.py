@@ -187,10 +187,11 @@ def upsert_shop_product(conn, p: dict) -> bool:
             """
             insert into tiktok_watch.shop_products
               (product_id, title, url, image, category_id, category_name, shop_name, seller_id,
-               price, price_original, rating, reviews, last_sold, focus, first_seen, last_seen, last_checked)
-            values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now(), now(), now())
+               price, price_original, rating, reviews, last_sold, focus, niche, first_seen, last_seen, last_checked)
+            values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now(), now(), now())
             on conflict (product_id) do update set
               focus = coalesce(excluded.focus, tiktok_watch.shop_products.focus),
+              niche = coalesce(tiktok_watch.shop_products.niche, excluded.niche),
               title = coalesce(excluded.title, tiktok_watch.shop_products.title),
               url = coalesce(excluded.url, tiktok_watch.shop_products.url),
               image = coalesce(excluded.image, tiktok_watch.shop_products.image),
@@ -210,7 +211,7 @@ def upsert_shop_product(conn, p: dict) -> bool:
             """,
             (p["product_id"], p.get("title"), p.get("url"), p.get("image"), p.get("category_id"),
              p.get("category_name"), p.get("shop_name"), p.get("seller_id"), p.get("price"),
-             p.get("price_original"), p.get("rating"), p.get("reviews"), p.get("sold"), p.get("focus")),
+             p.get("price_original"), p.get("rating"), p.get("reviews"), p.get("sold"), p.get("focus"), p.get("niche")),
         )
         return bool(cur.fetchone()[0])
 
@@ -230,7 +231,7 @@ def shop_products_to_refresh(conn, min_sold: int) -> list[tuple[str, str]]:
     with conn.cursor() as cur:
         cur.execute(
             "select product_id, url from tiktok_watch.shop_products"
-            " where not hidden and retired_at is null and url is not null and (coalesce(last_sold, 0) >= %s or starred)"
+            " where not hidden and retired_at is null and url is not null and (starred or (niche is not null and coalesce(last_sold, 0) >= %s))"
             "   and last_seen > now() - interval '14 days'"
             "   and (page_checked_at is null or page_checked_at < now() - interval '5 hours')"
             " order by starred desc, last_sold desc nulls last",
@@ -239,7 +240,7 @@ def shop_products_to_refresh(conn, min_sold: int) -> list[tuple[str, str]]:
         return cur.fetchall()
 
 
-def shop_products_6h(conn, min_price: float, max_price: float, limit: int, fmin: float = 0, fmax: float = 0) -> list[tuple[str, str]]:
+def shop_products_6h(conn, limit: int) -> list[tuple[str, str]]:
     """Products for the sales check: starred first, then fast sellers (20+/day) every run, then the rest
     oldest-checked first, so products without a daily rate yet get their second measurement too."""
     with conn.cursor() as cur:
@@ -247,10 +248,10 @@ def shop_products_6h(conn, min_price: float, max_price: float, limit: int, fmin:
             "select p.product_id, p.url from tiktok_watch.shop_products p"
             " left join tiktok_watch.shop_product_scores v using (product_id)"
             " where not p.hidden and p.retired_at is null and p.url is not null and p.last_seen > now() - interval '14 days'"
-            "   and (p.starred or p.price between %s and %s or p.price is null or (p.focus = 'women' and p.price between %s and %s))"
+            "   and (p.starred or p.niche is not null)"
             "   and (p.page_checked_at is null or p.page_checked_at < now() - interval '5 hours')"
             " order by p.starred desc, (coalesce(v.sold_per_day, 0) >= 20) desc, p.page_checked_at asc nulls first limit %s",
-            (min_price, max_price, fmin, fmax, limit),
+            (limit,),
         )
         return cur.fetchall()
 
@@ -341,7 +342,7 @@ def products_for_videos(conn, min_sold: int, limit: int) -> list[tuple]:
     with conn.cursor() as cur:
         cur.execute(
             "select product_id, seller_id, url, (starred or coalesce(last_sold, 0) >= 1000) from tiktok_watch.shop_products"
-            " where not hidden and retired_at is null and url is not null and (coalesce(last_sold, 0) >= %s or starred)"
+            " where not hidden and retired_at is null and url is not null and (starred or (niche is not null and coalesce(last_sold, 0) >= %s))"
             "   and last_seen > now() - interval '14 days'"
             "   and (videos_checked_at is null or videos_checked_at < now() - interval '20 hours'"
             "        or (video_count is null and videos_checked_at < now() - interval '1 hour'))"
