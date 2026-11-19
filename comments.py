@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import random
 from collections import Counter
 from datetime import datetime, timezone
 
@@ -21,14 +22,25 @@ VIDEOS_PER_KIT = int(os.environ.get("COMMENT_VIDEOS", "10"))
 PER_VIDEO = int(os.environ.get("COMMENTS_PER_VIDEO", "200"))
 KITS_PER_RUN = int(os.environ.get("COMMENT_KITS", "40"))
 REFRESH_DAYS = int(os.environ.get("COMMENT_REFRESH_DAYS", "7"))
+PAUSE = (4.0, 8.0)          # seconds between two videos: a calm pace, TikTok answers empty when asked too fast
+STOP_AFTER_EMPTY = 2        # this many empty answers in a row: stop the kit, the rest is retried on the next run
+MAX_TRIES = 4               # runs that may retry a kit's missing videos
 
 def kits_due(conn) -> list[tuple[str, list]]:
     with conn.cursor() as cur:
         cur.execute("""select product_id, data->'videos' from tiktok_watch.kits
                        where deleted_at is null and jsonb_array_length(coalesce(data->'videos', '[]')) > 0
-                         and (comments_at is null or comments_at < now() - make_interval(days => %s))
-                       order by comments_at nulls first, created_at limit %s""", (REFRESH_DAYS, KITS_PER_RUN))
+                         and (comments_at is null or comments_at < now() - make_interval(days => %s)
+                              or (coalesce((comments_stats->>'pending')::int, 0) > 0 and coalesce((comments_stats->>'tries')::int, 0) < %s))
+                       order by comments_at nulls first, created_at limit %s""", (REFRESH_DAYS, MAX_TRIES, KITS_PER_RUN))
         return cur.fetchall()
+
+
+def kit_stats(conn, pid: str) -> dict:
+    with conn.cursor() as cur:
+        cur.execute("select comments_stats from tiktok_watch.kits where product_id = %s and deleted_at is null", (pid,))
+        row = cur.fetchone()
+    return (row and row[0]) or {}
 
 
 def save(conn, pid: str, video_id: str, kept: list[dict]) -> None:
@@ -42,10 +54,18 @@ def save(conn, pid: str, video_id: str, kept: list[dict]) -> None:
 
 async def one_kit(api, conn, pid: str, videos: list, stats: Counter) -> dict:
     vids = sorted([v for v in videos or [] if v.get("item_id")], key=lambda v: -(v.get("plays") or 0))[:VIDEOS_PER_KIT]
-    seen = kept_n = 0
-    by_tag: Counter = Counter()
-    errors = []
+    prev = kit_stats(conn, pid)
+    done = set(prev.get("done") or [])
+    seen, kept_n = int(prev.get("seen") or 0), int(prev.get("kept") or 0)
+    by_tag: Counter = Counter(prev.get("by_tag") or {})
+    errors, empty_streak, stopped = [], 0, False
     for v in vids:
+        if str(v["item_id"]) in done:
+            continue
+        if empty_streak >= STOP_AFTER_EMPTY:
+            stopped = True
+            break
+        await asyncio.sleep(random.uniform(*PAUSE))
         kept = []
         try:
             n = 0
@@ -62,20 +82,29 @@ async def one_kit(api, conn, pid: str, videos: list, stats: Counter) -> dict:
                 if n >= PER_VIDEO:
                     break
             seen += n
+            done.add(str(v["item_id"]))
+            empty_streak = 0
         except Exception as e:  # one video failing must not stop the kit
             errors.append(f"{v['item_id']}: {type(e).__name__}: {str(e)[:120]}")
             stats["video_errors"] += 1
+            if "Empty" in type(e).__name__:
+                empty_streak += 1
+            elif "KeyError" in type(e).__name__:
+                done.add(str(v["item_id"]))   # odd comment data, not worth retrying
         save(conn, pid, str(v["item_id"]), kept)
         kept_n += len(kept)
         conn.commit()
-    summary = {"videos": len(vids), "seen": seen, "kept": kept_n, "by_tag": dict(by_tag), "errors": errors[:5]}
+    pending = len([v for v in vids if str(v["item_id"]) not in done])
+    summary = {"videos": len(vids), "done": sorted(done), "pending": pending, "tries": int(prev.get("tries") or 0) + 1,
+               "seen": seen, "kept": kept_n, "by_tag": dict(by_tag), "errors": errors[:5]}
+    if stopped:
+        stats["kits_paused"] += 1
     with conn.cursor() as cur:
         cur.execute("update tiktok_watch.kits set comments_at = now(), comments_stats = %s where product_id = %s and deleted_at is null",
                     (db.Jsonb(summary), pid))
     conn.commit()
     stats["kits"] += 1
-    stats["seen"] += seen
-    stats["kept"] += kept_n
+    stats["videos_left"] += pending
     return summary
 
 
@@ -88,8 +117,14 @@ async def main() -> None:
         todo = kits_due(conn)
         if todo:
             async with tiktok_session() as (api, _):
+                paused_in_row = 0
                 for pid, videos in todo:
+                    before = stats["kits_paused"]
                     await one_kit(api, conn, pid, videos, stats)
+                    paused_in_row = paused_in_row + 1 if stats["kits_paused"] > before else 0
+                    if paused_in_row >= 3:   # TikTok keeps answering empty: stop for today, the next run continues
+                        stats["stopped_early"] = 1
+                        break
         db.finish_run(conn, rid, True, dict(stats))
     except Exception as e:
         conn.rollback()

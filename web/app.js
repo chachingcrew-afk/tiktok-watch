@@ -1455,7 +1455,7 @@
   // ---------- Termékcsomagok (product kits) ----------
   // A TikTok Shop product link -> everything a product page and product photos are made from (data, gallery,
   // color photos, description images, creator videos, reviews), saved into a folder on this computer.
-  const KIT = { list: null, loading: false, adding: false, msg: "", busy: {}, root: null, rootName: "", videos: 10 };
+  const KIT = { list: null, loading: false, adding: false, msg: "", busy: {}, comments: {}, root: null, rootName: "", videos: 10 };
   const KIT_DIRS = ["01_info", "02_gallery", "03_colors", "04_description_images", "05_videos", "06_reviews", "07_models", "08_references", "09_prompts", "10_output"];
   const canFolders = () => typeof window.showDirectoryPicker === "function";
   const canFns = () => !!(sb.functions && sb.functions.invoke);
@@ -1553,7 +1553,7 @@
       "03_colors               one photo per color / variant",
       "04_description_images   images from the product description (often the size chart)",
       "05_videos               the most viewed creator videos of the product + videos.csv (all of them, with links)",
-      "06_reviews              customer reviews (reviews.md) and their photos",
+      "06_reviews              customer reviews (reviews.md) and their photos; relevant creator-video comments (comments.md, comments.csv)",
       "07_models               put your model photos here",
       "08_references           put example / reference images here",
       "09_prompts              the image prompts go here",
@@ -1637,11 +1637,57 @@
       } else {
         await writeFile(sub["06_reviews"], "README.txt", "No reviews saved yet. In Termékradar press \"Vélemények\" on this product (needs the browser extension), then save the folder again.\n");
       }
+      set("Kommentek mentése…");
+      try {
+        const cm = await rpc("tr_kit_comments", { pid: d.product_id }) || [];
+        if (cm.length) {
+          await writeFile(sub["06_reviews"], "comments.md", commentsMarkdown(d, cm));
+          await writeFile(sub["06_reviews"], "comments.csv", csv([["likes", "tags", "date", "comment", "video"],
+            ...cm.map(c => [c.likes, (c.tags || []).join(" "), (c.created_at || "").slice(0, 10), c.text, `https://www.tiktok.com/@_/video/${c.video_id}`])]));
+        }
+      } catch (_) { errs.push("comments"); }
       for (const n of ["07_models", "08_references", "09_prompts", "10_output"]) if (!(await fileExists(sub[n], ".keep"))) await writeFile(sub[n], ".keep", "");
       await rpc("tr_kit_saved", { kid: k.id, folder: `${KIT.rootName}/${name}` });
       KIT.busy[k.id] = errs.length ? `Elmentve a ${KIT.rootName}/${name} mappába, de ${errs.length} fájl nem jött le (${errs.slice(0, 3).join(", ")}${errs.length > 3 ? "…" : ""}). Mentsd újra később: a meglévő fájlokat nem tölti le újra.` : `Elmentve: ${KIT.rootName}/${name}`;
       await loadKits(true);
     } catch (e) { KIT.busy[k.id] = "Nem sikerült menteni: " + (e.message || e); renderKits(); }
+  }
+
+  // ---- creator-video comments (only the relevant ones: buying intent, buyer questions and experiences) ----
+  const CTAGS = [["intent", "Vásárlási szándék", "Buying intent"], ["size", "Méret, fazon", "Size & fit questions"],
+    ["material", "Anyag, minőség", "Material & quality"], ["price", "Ár, szállítás, készlet", "Price, shipping, stock"],
+    ["color", "Szín", "Colours"], ["owner", "Vásárlói tapasztalat", "Buyer experiences"], ["dupe", "Máshol is kapható", "Bought elsewhere / dupes"]];
+  function commentsMarkdown(d, cm) {
+    const L = [`# Creator video comments: ${d.title || d.product_id}`, "",
+      `${cm.length} relevant comments from the most played creator videos (small talk removed), most liked first.`, ""];
+    for (const [k, , en] of CTAGS) {
+      const xs = cm.filter(c => (c.tags || []).includes(k));
+      if (!xs.length) continue;
+      L.push(`## ${en} (${xs.length})`, "");
+      for (const c of xs) L.push(`- ${String(c.text || "").replace(/\s+/g, " ").trim()}${c.likes ? ` (${c.likes} likes)` : ""}`);
+      L.push("");
+    }
+    return L.join("\n");
+  }
+  async function toggleKitComments(k) {
+    if (KIT.comments[k.id]) { delete KIT.comments[k.id]; renderKits(); return; }
+    KIT.comments[k.id] = "loading"; renderKits();
+    try { KIT.comments[k.id] = await rpc("tr_kit_comments", { pid: k.product_id }) || []; }
+    catch (e) { KIT.comments[k.id] = []; KIT.busy[k.id] = errText(e); }
+    renderKits();
+  }
+  function kitCommentsBox(k) {
+    const cm = KIT.comments[k.id];
+    if (!cm) return null;
+    if (cm === "loading") return el("div", { class: "d-note" }, "Kommentek betöltése…");
+    if (!cm.length) return el("div", { class: "d-note" }, k.comments_at ? "Ennél a terméknél nem találtam releváns kommentet." : "Ennek a terméknek a kommentjei még nincsenek lekérve.");
+    return el("div", { class: "kit-comments" }, ...CTAGS.map(([key, hu]) => {
+      const xs = cm.filter(c => (c.tags || []).includes(key));
+      if (!xs.length) return null;
+      return el("details", { open: key === "intent" ? "" : null },
+        el("summary", {}, `${hu} (${xs.length})`),
+        el("ul", {}, ...xs.slice(0, 40).map(c => el("li", {}, String(c.text || ""), c.likes ? el("span", { class: "muted" }, ` · ${nf(c.likes)} ♥`) : null))));
+    }));
   }
 
   function renderKits() {
@@ -1662,7 +1708,8 @@
       const d = k.data || {}, busy = KIT.busy[k.id];
       const chips = [
         `${(d.gallery || []).length} galériakép`, `${(d.colors || []).length} szín`, `${(d.sizes || []).length} méret`,
-        `${(d.description_images || []).length} leíráskép`, `${(d.videos || []).length} videó`, `${Number(k.reviews) || 0} vélemény mentve`];
+        `${(d.description_images || []).length} leíráskép`, `${(d.videos || []).length} videó`, `${Number(k.reviews) || 0} vélemény mentve`,
+        k.comments_at ? `${nf(Number(k.comments) || 0)} releváns komment` : "kommentek: még nincs lekérve"];
       return el("div", { class: "kit-card" },
         el("div", { class: "mine-thumb" }, d.gallery && d.gallery[0] ? el("img", { src: sized(d.gallery[0], 240), alt: "", loading: "lazy", referrerpolicy: "no-referrer" }) : "Nincs kép"),
         el("div", { class: "mine-body" },
@@ -1675,9 +1722,11 @@
           el("div", { class: "mine-links" }, ...chips.map(c => el("span", { class: "chip" }, c))),
           k.saved_at ? el("div", { class: "d-note" }, `Mentve: ${k.folder || ""} · ${new Date(k.saved_at).toLocaleString("hu-HU")}`) : null,
           busy && busy !== "confirm" ? el("div", { class: "d-note", role: "status" }, busy) : null,
+          kitCommentsBox(k),
           el("div", { class: "kit-actions" },
             el("button", { type: "button", class: "btn primary", onclick: () => saveKitToFolder(k) }, k.saved_at ? "Mentés újra a gépre" : "Mentés a gépre"),
             el("button", { type: "button", class: "btn", onclick: () => kitReviews(k) }, "Vélemények"),
+            el("button", { type: "button", class: "btn", "aria-expanded": KIT.comments[k.id] ? "true" : "false", onclick: () => toggleKitComments(k) }, KIT.comments[k.id] ? "Kommentek elrejtése" : "Kommentek"),
             el("button", { type: "button", class: "btn", onclick: () => refreshKit(k) }, "Frissítés"),
             chromeLink(d.url || `https://shop.tiktok.com/us/pdp/x/${k.product_id}`, { class: "btn" }, "TikTok Shop ↗"),
             el("button", { type: "button", class: "btn danger", onclick: () => removeKit(k) }, busy === "confirm" ? "Biztosan törlöd?" : "Törlés"))));

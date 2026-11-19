@@ -12,7 +12,7 @@ KEEP = {
     "I have this dress & it comes off a little bit after u wash it": "owner", "Wearing this dress tonight for my dads party": "owner",
     "i have this same dress off amazon": "dupe",
 }
-DROP = ["So pretty 😍", "You look amazing 🔥", "Teamwork", "Merry Christmas", "😍😍😍", "How cute!", "bello", "The name😭"]
+DROP = ["The end with the wall made me think booktok would be in the comments… my hubby needs to take notes!", "So pretty 😍", "You look amazing 🔥", "Teamwork", "Merry Christmas", "😍😍😍", "How cute!", "bello", "The name😭"]
 
 
 def test_keeps_useful_comments():

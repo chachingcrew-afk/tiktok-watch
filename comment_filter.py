@@ -5,7 +5,7 @@ import re
 
 W = r"(?<![\w'])"   # word start that also works after emoji / punctuation
 TAGS: list[tuple[str, re.Pattern]] = [
-    ("intent", re.compile(W + r"(ne+e+d+s?(ed)?\b|i need|need (this|it|that|one|these)|want (this|it|one|that|these)|i want|wan+t+ ?it"
+    ("intent", re.compile(W + r"(ne{3,}d+\b|need{2,}\b|^need (it|this|one|that|these)?|i (really |so )?need|need (this|it|that|one|these)|want (this|it|one|that|these)|i want|wan+t+ ?it"
                           r"|(add(ed|ing)?|put(ting)?|thr[eo]w(ing)?)\b[^.!?]{0,25}\b(to|in|into) (my |the )?cart|in (my|the) cart"
                           r"|(just |already |finally )?(bought|ordered|purchased|copped|buying|grabbed) (it|this|one|mine|the|that|a|two|2)"
                           r"|just (bought|ordered|purchased|copped)|gonna (buy|get|order|cop)|getting (this|it|one)|take my money|must have|have to have"
