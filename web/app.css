@@ -414,13 +414,14 @@ svg { display: block; }
 #ptable th:nth-child(1) { width: 64px; }
 #ptable th:nth-child(3) { width: 104px; }
 #ptable th:nth-child(4) { width: 132px; }
-#ptable th:nth-child(5) { width: 144px; }
-#ptable th:nth-child(6) { width: 128px; }
-#ptable th:nth-child(7) { width: 112px; }
+#ptable th:nth-child(5) { width: 136px; }
+#ptable th:nth-child(6) { width: 144px; }
+#ptable th:nth-child(7) { width: 128px; }
+#ptable th:nth-child(8) { width: 112px; }
 #ptable .ptitle { max-width: none; }
 #ptable td { overflow-wrap: anywhere; }
 @media (max-width: 1240px) {
-  #ptable th:nth-child(7), #ptable td:nth-child(7) { display: none; }
+  #ptable th:nth-child(8), #ptable td:nth-child(8) { display: none; }
 }
 @media (max-width: 900px) {
   #ptable, #ptable tbody { display: block; }
@@ -429,7 +430,7 @@ svg { display: block; }
   #ptable td { display: block; padding: 0; border: 0; text-align: left; }
   #ptable td.c-prod { grid-column: 1 / -1; padding-right: 48px; }
   #ptable td.c-star { position: absolute; top: 12px; right: 12px; width: auto; }
-  #ptable td:nth-child(7) { display: none; }
+  #ptable td:nth-child(8) { display: none; }
 }
 
 /* kit comments */
@@ -438,3 +439,36 @@ svg { display: block; }
 .kit-comments summary { cursor: pointer; font-weight: 600; min-height: 32px; display: flex; align-items: center; }
 .kit-comments ul { margin: 8px 0 4px; padding-left: 18px; display: grid; gap: 6px; font-size: 14px; }
 .kit-comments .muted { color: var(--faint); }
+
+/* niches */
+.niches { margin: 0 0 16px; }
+.niches .tab { min-height: 36px; padding: 0 14px; font-size: 13.5px; }
+
+/* 14-day sparkline in the product list */
+.spark-box { display: grid; gap: 2px; }
+.spark { width: 104px; height: 30px; display: block; }
+.ptable .small.pos { color: var(--money); font-weight: 600; }
+.ptable .small.neg { color: var(--danger, #dc2626); font-weight: 600; }
+
+/* drawer: sales per day / week / month */
+.per { margin-top: 16px; }
+.per-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.per-head h4 { margin: 0; font-size: 14px; font-weight: 600; }
+.seg-mini { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 999px; padding: 2px; background: var(--surface); }
+.seg-mini button { all: unset; cursor: pointer; padding: 4px 14px; min-height: 28px; display: inline-flex; align-items: center; border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--side-ink); }
+.seg-mini button[aria-selected="true"] { background: var(--blue); color: #fff; }
+.seg-mini button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.per-cmp { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.per-cmp b.up { color: var(--money); }
+.per-cmp b.down { color: var(--danger, #dc2626); }
+
+/* settings: niches */
+.niche-set { display: grid; gap: 10px; margin: 8px 0 16px; }
+.niche-row { display: grid; grid-template-columns: minmax(180px, 1.4fr) repeat(3, 96px); gap: 8px 12px; align-items: end; padding: 12px; border: 1px solid var(--line); border-radius: 12px; }
+.niche-row label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 600; }
+.niche-row input { width: 100%; min-height: 40px; }
+.niche-name { display: grid; gap: 2px; align-self: center; }
+.niche-name em { font-style: normal; color: var(--muted); font-size: 12.5px; }
+.niche-cats { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+@media (max-width: 640px) { .niche-row { grid-template-columns: repeat(3, 1fr); } .niche-name { grid-column: 1 / -1; } }
+.niche-cats .tag { padding-right: 10px; }

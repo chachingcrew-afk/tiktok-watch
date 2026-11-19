@@ -159,7 +159,7 @@
 
   // ---------- state ----------
   let state = { shop: [], videos: [], history: {}, runs: [], settings: {} };
-  const P = { focus: null, seg: store.get("seg") || "all", sort: store.get("sort") || "revenue_per_day", q: "", cat: "", pmin: null, pmax: null, page: 0, sel: null };
+  const P = { focus: null, niche: store.get("niche") || "", per: store.get("per") || "day", seg: store.get("seg") || "all", sort: store.get("sort") || "revenue_per_day", q: "", cat: "", pmin: null, pmax: null, page: 0, sel: null };
   const V = { seg: "tracking", sort: "recent_views_per_hour", q: "" };
   const PAGE = 50;
   const cache = { thumbs: {}, gallery: {}, galurls: {}, videos: {}, hist: {}, reviews: {} };
@@ -218,22 +218,20 @@
   }
 
   function renderAll() {
-    renderStatus(); renderKpis(); renderSeg(); renderCats(); renderTypes(); renderTable();
+    renderStatus(); nicheHead(); renderNiches(); renderKpis(); renderSeg(); renderCats(); renderTypes(); renderTable();
     renderVideos(); renderRuns(); if (!dirty) renderSettings();
   }
 
   // ---------- navigation ----------
   function selectView(v) {
     if (!["products", "women", "mine", "kits", "videos", "runs", "settings"].includes(v)) v = "products";
-    const focus = v === "women" ? "women" : null;
-    if (focus !== P.focus) { P.focus = focus; P.page = 0; P.cat = ""; P.found = null; P.q = ""; $("q").value = ""; if (state.shop.length) { renderKpis(); renderSeg(); renderCats(); renderTypes(); renderTable(); } }
-    $("products-title").textContent = focus ? "Női ruha" : "Termékek";
-    $("products-sub").textContent = focus ? `Női ruházat a TikTok Shopról, $${fsetting("fashion_min_price")}–${fsetting("fashion_max_price")} között, ismert márkák nélkül. Naponta bővül.` : "TikTok Shop termékek a beállított ársávban, napi eladás és bevétel szerint.";
-    const navV = v === "women" ? "products" : v;  // women's clothing is a category of Termékek now, not a menu item
+    if (v === "women") { v = "products"; setNiche("fashion", true); }  // old bookmark: women's clothing is the fashion niche now
+    nicheHead();
+    const navV = v;
     for (const b of document.querySelectorAll(".nav-item")) {
       if (b.dataset.view === navV) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
     }
-    for (const s of ["products", "mine", "kits", "videos", "runs", "settings"]) $("view-" + s).hidden = s !== (v === "women" ? "products" : v);
+    for (const s of ["products", "mine", "kits", "videos", "runs", "settings"]) $("view-" + s).hidden = s !== v;
     store.set("view", v);
     if (v === "mine") loadMine();
     if (v === "kits") loadKits();
@@ -288,12 +286,38 @@
     return hit;
   }
   const fsetting = (k) => setting(k);
-  const isWomen = (p) => p.focus === "women";
-  const bandOf = (women) => women ? [setting("fashion_min_price"), setting("fashion_max_price")] : [setting("shop_min_price"), setting("shop_max_price")];
-  const priceMin = (p) => P.pmin != null ? P.pmin : bandOf(p ? isWomen(p) : !!P.focus)[0];
-  const priceMax = (p) => P.pmax != null ? P.pmax : bandOf(p ? isWomen(p) : !!P.focus)[1];
+  // ---------- niches (settings 'niches': key, label, price band; products carry their niche) ----------
+  const nicheList = () => Array.isArray(state.settings.niches) ? state.settings.niches : [];
+  const nicheBy = (k) => nicheList().find(n => n.key === k);
+  const isWomen = (p) => p.niche === "fashion" || (!p.niche && p.focus === "women");
+  const bandOf = (k) => { const n = nicheBy(k); return n ? [Number(n.min_price), Number(n.max_price)] : [setting("shop_min_price"), setting("shop_max_price")]; };
+  const allBand = () => { const l = nicheList(); return l.length ? [Math.min(...l.map(n => Number(n.min_price))), Math.max(...l.map(n => Number(n.max_price)))] : bandOf(null); };
+  const priceMin = (p) => P.pmin != null ? P.pmin : (p ? bandOf(p.niche) : P.niche ? bandOf(P.niche) : allBand())[0];
+  const priceMax = (p) => P.pmax != null ? P.pmax : (p ? bandOf(p.niche) : P.niche ? bandOf(P.niche) : allBand())[1];
   const inBand = (p) => p.price != null && Number(p.price) >= priceMin(p) && Number(p.price) <= priceMax(p);
-  const inView = (p) => !P.focus || p.focus === P.focus;
+  const inView = (p) => !P.niche || p.niche === P.niche;
+  function setNiche(k, quiet) {
+    P.niche = k || ""; P.focus = P.niche === "fashion" ? "women" : null; store.set("niche", P.niche);
+    P.page = 0; P.cat = ""; P.found = null; P.q = ""; if ($("q")) $("q").value = "";
+    if (quiet) return;
+    nicheHead(); if (state.shop.length) { renderNiches(); renderKpis(); renderSeg(); renderCats(); renderTypes(); renderTable(); }
+  }
+  P.focus = P.niche === "fashion" ? "women" : null;
+  function nicheHead() {
+    const n = nicheBy(P.niche);
+    $("products-title").textContent = n ? n.label : "Termékek";
+    $("products-sub").textContent = n ? `TikTok Shop termékek ebben a niche-ben, $${n.min_price}–${n.max_price} között, napi eladás és bevétel szerint.`
+      : "TikTok Shop termékek niche-ek szerint, napi eladás és bevétel szerint.";
+  }
+  function renderNiches() {
+    const live = state.shop.filter(p => !p.hidden && inBand(p) && !brandOf(p));
+    const agg = new Map();
+    for (const p of live) { const a = agg.get(p.niche || "") || { n: 0, rev: 0 }; a.n++; a.rev += Number(p.revenue_per_day) || 0; agg.set(p.niche || "", a); }
+    const pill = (k, label, a) => el("button", { type: "button", class: "tab", role: "tab", "aria-selected": String(P.niche === k),
+      title: a ? `${nf(a.n)} termék, együtt ${money(a.rev)} napi bevétel` : null, onclick: () => setNiche(k) }, label, el("em", {}, nf(a ? a.n : 0)));
+    $("niches").replaceChildren(pill("", "Mind", { n: live.length, rev: live.reduce((s, p) => s + (Number(p.revenue_per_day) || 0), 0) }),
+      ...nicheList().map(n => pill(n.key, n.label, agg.get(n.key))));
+  }
   const isWin = (p) => Number(p.revenue_per_day) >= setting("shop_min_revenue_day");
   const isGrowing = (p) => Number(p.sold_per_day) > 0 && (Number(p.trend) >= 1 || Number(p.sold_per_day_recent) >= Number(p.sold_per_day) || Number(p.growth_pct) >= 2);
   const isHot = (p) => Number(p.fresh_videos) > 0 && isGrowing(p);
@@ -336,7 +360,7 @@
     const best = live.reduce((m, p) => Number(p.revenue_per_day) > (m ? Number(m.revenue_per_day) : -1) ? p : m, null);
     const totalRev = measured.reduce((s, p) => s + (Number(p.revenue_per_day) || 0), 0);
     const cards = [
-      ["", P.focus ? "Női ruha a sávban" : "Termék a sávban", nf(live.length), `$${priceMin()}–${priceMax()}, márkák nélkül`],
+      ["", "Termék a sávban", nf(live.length), `$${priceMin()}–${priceMax()}, márkák nélkül`],
       ["money", "Nyerő termék", nf(live.filter(isWin).length), `legalább $${nf(setting("shop_min_revenue_day"))}/nap`],
       ["money", "Legjobb napi bevétel", best && best.revenue_per_day != null ? money(best.revenue_per_day) : "–", best ? String(best.title || "").slice(0, 38) : "még nincs mérés"],
       ["heat", "Aktuális nyerő", nf(live.filter(isHot).length), `nő az eladás + max. ${setting("hot_video_days")} napos videó`],
@@ -410,11 +434,10 @@
     if (P.focus) {
       const tc = new Map();
       for (const p of state.shop) if (inView(p) && !p.hidden) { const [k] = wtype(p); tc.set(k, (tc.get(k) || 0) + 1); }
-      $("cat").replaceChildren(el("option", { value: "__all" }, "Minden kategória"), el("option", { value: "" }, "Női ruha: minden típus"),
-        ...[...WTYPES.map(([k, l]) => [k, l]), ["other", "Egyéb"]].filter(([k]) => tc.get(k)).map(([k, l]) => el("option", { value: "t:" + k }, `Női ruha: ${l} (${tc.get(k)})`)));
+      $("cat").replaceChildren(el("option", { value: "" }, "Minden típus"),
+        ...[...WTYPES.map(([k, l]) => [k, l]), ["other", "Egyéb"]].filter(([k]) => tc.get(k)).map(([k, l]) => el("option", { value: "t:" + k }, `${l} (${tc.get(k)})`)));
     } else {
-      const nWomen = state.shop.filter(p => p.focus === "women" && !p.hidden).length;
-      $("cat").replaceChildren(el("option", { value: "" }, "Minden kategória"), el("option", { value: "__women" }, `Női ruha (${nf(nWomen)})`),
+      $("cat").replaceChildren(el("option", { value: "" }, "Minden kategória"),
         ...opts.map(([id, c]) => el("option", { value: id }, `${c.name} (${c.n})`)));
     }
     $("cat").value = P.cat;
@@ -469,7 +492,7 @@
     const slice = list.slice(P.page * PAGE, P.page * PAGE + PAGE);
     if (!slice.length) {
       const msg = state.shop.length ? ["Nincs találat", "Próbálj más szűrőt, kategóriát vagy keresőszót."] : ["Még nincs termék", "A reggeli termékkeresés után itt lesznek a TikTok Shop termékek."];
-      $("prows").replaceChildren(el("tr", {}, el("td", { colspan: 7, class: "empty" }, el("b", {}, msg[0]), msg[1])));
+      $("prows").replaceChildren(el("tr", {}, el("td", { colspan: 8, class: "empty" }, el("b", {}, msg[0]), msg[1])));
     } else {
       $("prows").replaceChildren(...slice.map((p, i) => productRow(p, P.page * PAGE + i + 1)));
       loadExtra(slice.map(p => p.product_id)).then(got => { if (got) renderTable(); });
@@ -487,6 +510,7 @@
     if (isHot(p)) meta.push(el("span", { class: "chip heat" }, "Aktuális"));
     if (isWin(p)) meta.push(el("span", { class: "chip money" }, "Nyerő"));
     if (isNew(p)) meta.push(el("span", { class: "chip blue" }, "Új"));
+    if (!P.niche && nicheBy(p.niche)) meta.push(el("span", { class: "chip blue" }, nicheBy(p.niche).label));
     meta.push(el("span", {}, [isWomen(p) ? wtype(p)[1] : p.category_name, p.shop_name].filter(Boolean).join(" · ")));
     const facts = [p.sold_now != null ? short(p.sold_now) + " eladva" : null,
       Number(p.video_views) > 0 ? short(p.video_views) + " videónézés" : null].filter(Boolean);
@@ -500,6 +524,7 @@
       el("td", { class: "r" }, el("div", { class: "big" }, usd(p.price)), orig ? el("div", { class: "small" }, el("s", {}, usd(orig))) : null),
       el("td", { class: "r" }, p.sold_per_day != null ? el("div", { class: "big" }, "+" + nf(p.sold_per_day)) : el("span", { class: "na" }, "mérés folyik"),
         p.sold_per_day_recent != null ? el("div", { class: "small" }, "most " + short(p.sold_per_day_recent) + "/nap") : null),
+      el("td", { class: "c-spark" }, sparkCell(p)),
       el("td", { class: "r" }, p.revenue_per_day != null ? el("div", { class: "big money" }, money(p.revenue_per_day)) : el("span", { class: "na" }, "–"),
         p.revenue_per_day != null ? el("div", { class: "small" }, "≈ " + money(Number(p.revenue_per_day) * 30) + "/hó") : null),
       el("td", { class: "r" }, p.growth_pct != null ? el("div", { class: "big" + (Number(p.growth_pct) >= 5 ? " pos" : "") }, "+" + pct(p.growth_pct)) : el("span", { class: "na" }, "–"), growthChip(p)),
@@ -529,12 +554,10 @@
   function renderSearchNote() {
     const n = $("products-sub");
     if (P.found) n.textContent = `Keresés az összes termékben („${P.q.trim()}”): ${nf(P.found.length)} találat, ársávtól és szűrőktől függetlenül.`;
-    else selectView(store.get("view") || "products", true);
+    else nicheHead();
   }
   $("cat").addEventListener("change", () => {
     const v = $("cat").value;
-    if (v === "__women") { selectView("women"); return; }
-    if (v === "__all") { selectView("products"); return; }
     P.cat = v; P.page = 0; renderTypes(); renderTable();
   });
   $("sort").addEventListener("change", () => { P.sort = $("sort").value; store.set("sort", P.sort); renderTable(); });
@@ -629,6 +652,7 @@
           stat(p.trend != null ? "×" + dec(p.trend) : "–", "tempó az előző naphoz", Number(p.trend) > 1.2 ? "heat" : ""),
           stat(p.sold_per_day_week != null ? "+" + nf(p.sold_per_day_week) : "–", "napi átlag a héten")),
         salesChart(cache.hist[id]),
+        periodSection(cache.hist[id]),
         el("div", { class: "d-note" }, "A bevétel a mostani ár és a napi eladott darab szorzata, a TikTok Shop eladásszámából. A növekedés: a napi eladás az addig eladott darabok hány százaléka.")),
       videosSection(p),
       reviewsSection(p));
@@ -906,6 +930,110 @@
   }
   const salesChart = (pts) => lineChart(pts, "var(--money)", "Eladott darab", "A görbe a második mérés után rajzolódik ki.");
 
+  // Daily units sold from the cumulative counter: the last reading of each (UTC) day, a gap of several days spread evenly.
+  function dailySales(pts) {
+    if (!Array.isArray(pts) || pts.length < 2) return [];
+    const last = new Map();
+    for (const [t, s] of pts) last.set(Math.floor(t / 86400), Number(s));
+    const days = [...last.keys()].sort((a, b) => a - b), out = [];
+    for (let i = 1; i < days.length; i++) {
+      const d0 = days[i - 1], d1 = days[i], v = Math.max(0, last.get(d1) - last.get(d0)) / (d1 - d0);
+      for (let d = d0 + 1; d <= d1; d++) out.push([d, v]);
+    }
+    return out;
+  }
+  const HU_MON = ["jan.", "febr.", "márc.", "ápr.", "máj.", "jún.", "júl.", "aug.", "szept.", "okt.", "nov.", "dec."];
+  const dayDate = (d) => new Date(d * 864e5);
+  const mdLabel = (d) => { const x = dayDate(d); return `${HU_MON[x.getUTCMonth()]} ${x.getUTCDate()}.`; };
+  // buckets: [label, units, partial?] for day / week (Monday start) / month
+  function periodBuckets(pts, per) {
+    const daily = dailySales(pts);
+    if (!daily.length) return [];
+    const today = Math.floor(Date.now() / 864e5);
+    if (per === "day") return daily.map(([d, v]) => [mdLabel(d), v, d >= today]);
+    const m = new Map();
+    for (const [d, v] of daily) {
+      const k = per === "week" ? d - ((d + 3) % 7) : dayDate(d).getUTCFullYear() * 12 + dayDate(d).getUTCMonth();
+      const a = m.get(k) || { v: 0, n: 0 }; a.v += v; a.n++; m.set(k, a);
+    }
+    const first = daily[0][0];
+    return [...m.entries()].sort((a, b) => a[0] - b[0]).map(([k, a]) => {
+      if (per === "week") return [mdLabel(k) + " hete", a.v, k + 6 >= today || k < first];
+      const y = Math.floor(k / 12), mo = k % 12, len = new Date(Date.UTC(y, mo + 1, 0)).getUTCDate();
+      return [HU_MON[mo] + (mo === 0 ? " " + y : ""), a.v, a.n < len];
+    });
+  }
+  function barChart(buckets, color, emptyText) {
+    const w = 600, h = 170, L = 50, R = 10, T = 10, B = 24;
+    const svg = svgEl("svg", { viewBox: `0 0 ${w} ${h}`, class: "chart", role: "img" });
+    if (!buckets.length) {
+      const t = svgEl("text", { x: w / 2, y: h / 2, "text-anchor": "middle", fill: "var(--muted)", "font-size": 13 });
+      t.textContent = emptyText; svg.append(t); return svg;
+    }
+    const y1 = Math.max(1, ...buckets.map(b => b[1])), sy = y => T + (1 - y / y1) * (h - T - B);
+    for (const v of [0, y1 / 2, y1]) {
+      svg.append(svgEl("line", { x1: L, x2: w - R, y1: sy(v), y2: sy(v), stroke: "var(--line)", "stroke-width": 1 }));
+      const t = svgEl("text", { x: L - 6, y: sy(v) + 4, "text-anchor": "end", fill: "var(--muted)", "font-size": 11 }); t.textContent = short(Math.round(v)); svg.append(t);
+    }
+    const slot = (w - L - R) / buckets.length, bw = Math.max(2, Math.min(40, slot * 0.7));
+    const every = Math.ceil(buckets.length / 8);
+    buckets.forEach(([label, v, partial], i) => {
+      const x = L + i * slot + (slot - bw) / 2, top = sy(v);
+      const r = svgEl("rect", { x: x.toFixed(1), y: top.toFixed(1), width: bw.toFixed(1), height: Math.max(0, h - B - top).toFixed(1), rx: Math.min(4, bw / 3), fill: color, opacity: partial ? .4 : .9 });
+      const tip = svgEl("title", {}); tip.textContent = `${label}: ${nf(Math.round(v))} db${partial ? " (még nem teljes)" : ""}`; r.append(tip); svg.append(r);
+      if (i % every === 0 || i === buckets.length - 1) {
+        if (i !== buckets.length - 1 && buckets.length - 1 - i < every) return;
+        const t = svgEl("text", { x: x + bw / 2, y: h - 6, "text-anchor": "middle", fill: "var(--muted)", "font-size": 11 }); t.textContent = label.replace(" hete", ""); svg.append(t);
+      }
+    });
+    svg.setAttribute("aria-label", "Eladott darab időszakonként: " + buckets.map(b => `${b[0]} ${Math.round(b[1])}`).join(", "));
+    return svg;
+  }
+  function periodSection(pts) {
+    const PER = [["day", "Napi"], ["week", "Heti"], ["month", "Havi"]];
+    const daily = dailySales(pts), today = Math.floor(Date.now() / 864e5);
+    const full = daily.filter(([d]) => d < today), sum = (a) => a.reduce((s, x) => s + x[1], 0);
+    const last7 = full.slice(-7), prev7 = full.slice(-14, -7);
+    let cmp = null;
+    if (last7.length === 7 && prev7.length === 7) {
+      const a = sum(last7), b = sum(prev7), ch = b > 0 ? (a - b) / b * 100 : null;
+      cmp = el("div", { class: "per-cmp" }, `Utolsó 7 nap: ${nf(Math.round(a))} db · előtte 7 nap: ${nf(Math.round(b))} db`,
+        ch != null ? el("b", { class: ch >= 10 ? "up" : ch <= -10 ? "down" : "" }, ` (${ch >= 0 ? "+" : ""}${Math.round(ch)}%)`) : null);
+    }
+    return el("div", { class: "per" },
+      el("div", { class: "per-head" }, el("h4", {}, "Eladás időszakonként"),
+        el("div", { class: "seg-mini", role: "tablist" }, ...PER.map(([k, l]) => el("button", { type: "button", role: "tab", "aria-selected": String(P.per === k),
+          onclick: () => { P.per = k; store.set("per", k); renderDrawer(); } }, l)))),
+      pts === undefined || pts === null ? barChart([], "var(--blue)", "Betöltés…")
+        : barChart(periodBuckets(pts, P.per), "var(--blue)", "A napi bontás két különböző napi mérés után jelenik meg."),
+      cmp);
+  }
+  // 14-day daily sales sparkline for the list (oldest first, null = no reading that day)
+  function sparkCell(p) {
+    const s = Array.isArray(p.spark) ? p.spark : null;
+    const vals = s ? s.filter(v => v != null) : [];
+    if (vals.length < 3) return el("span", { class: "na" }, "–");
+    const w = 104, h = 30, max = Math.max(1, ...vals), n = s.length;
+    const avg = (a) => { const x = a.filter(v => v != null); return x.length ? x.reduce((t, v) => t + v, 0) / x.length : null; };
+    const recent = avg(s.slice(-4)), before = avg(s.slice(-11, -4));
+    const dir = recent == null || before == null ? 0 : before === 0 ? (recent > 0 ? 1 : 0) : recent / before >= 1.15 ? 1 : recent / before <= 0.85 ? -1 : 0;
+    const color = dir > 0 ? "var(--money)" : dir < 0 ? "var(--danger, #dc2626)" : "var(--faint)";
+    const svg = svgEl("svg", { viewBox: `0 0 ${w} ${h}`, class: "spark", role: "img" });
+    let d = "", pen = false;
+    s.forEach((v, i) => {
+      if (v == null) { pen = false; return; }
+      const x = (i / (n - 1)) * (w - 4) + 2, y = h - 3 - (v / max) * (h - 6);
+      d += (pen ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1) + " "; pen = true;
+    });
+    svg.append(svgEl("path", { d, fill: "none", stroke: color, "stroke-width": 1.8, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+    const li = s.length - 1 - [...s].reverse().findIndex(v => v != null);
+    svg.append(svgEl("circle", { cx: ((li / (n - 1)) * (w - 4) + 2).toFixed(1), cy: (h - 3 - (s[li] / max) * (h - 6)).toFixed(1), r: 2.4, fill: color }));
+    svg.setAttribute("aria-label", "Napi eladás az elmúlt 14 napban: " + s.map(v => v == null ? "nincs adat" : v).join(", "));
+    const ch = before ? Math.round((recent - before) / before * 100) : null;
+    return el("div", { class: "spark-box", title: "Napi eladás az elmúlt 14 napban (tegnapig). Szín: az utolsó 4 nap átlaga az előtte lévő 7 naphoz képest." }, svg,
+      el("div", { class: "small " + (dir > 0 ? "pos" : dir < 0 ? "neg" : "") }, ch == null ? "" : (ch >= 0 ? "▲ " : "▼ ") + Math.abs(ch) + "%"));
+  }
+
   // ---------- videos (radar) ----------
   const VSEG = [["tracking", "Követett"], ["accel", "Gyorsul"], ["starred", "Csillagos"], ["out", "Kiesett"], ["hidden", "Elrejtett"]];
   const isOut = (v) => v.status !== "tracking";
@@ -1044,22 +1172,18 @@
     const lastShop = state.runs.find(r => r.job === "shop" && r.stats && r.stats.categories);
     const catStats = lastShop ? lastShop.stats.categories : {};
     $("settings-form").replaceChildren(
-      el("div", { class: "card wide" }, el("h2", {}, "Termékkeresés"),
-        el("p", {}, "Minden reggel végignézi ezeket a TikTok Shop kategóriákat, és elmenti az ársávba eső termékeket. 6 óránként újraméri az eladásukat."),
-        el("div", { class: "row" }, numField("shop_min_price"), numField("shop_max_price"), numField("shop_min_revenue_day")),
-        el("div", { class: "row" }, numField("shop_fetches_per_category"), numField("shop_track_min_sold"), numField("hot_video_days")),
+      el("div", { class: "card wide" }, el("h2", {}, "Niche-ek"),
+        el("p", {}, "Minden reggel ezeknek a niche-eknek a TikTok Shop kategóriáit nézi át, a niche saját ársávjában. 6 óránként újraméri az eladásukat. Zöld szám: hány ársávba eső terméket hozott a kategória az utolsó futásnál."),
+        el("div", { class: "niche-set" }, ...nicheList().map(n => el("div", { class: "niche-row" },
+          el("div", { class: "niche-name" }, el("b", {}, n.label), lastShop && lastShop.stats.niches && lastShop.stats.niches[n.key] ? el("em", {}, `${nf(lastShop.stats.niches[n.key].in_range || 0)} termék az utolsó futásnál`) : null),
+          el("label", {}, "Min $", el("input", { type: "number", id: `n-${n.key}-min`, min: 0, max: 10000, value: n.min_price })),
+          el("label", {}, "Max $", el("input", { type: "number", id: `n-${n.key}-max`, min: 1, max: 10000, value: n.max_price })),
+          el("label", { title: "Hány oldalt töltsön be kategóriánként (egy oldal kb. 20 termék)" }, "Oldal", el("input", { type: "number", id: `n-${n.key}-loads`, min: 0, max: 60, value: n.loads })),
+          el("div", { class: "niche-cats" }, ...[...(n.cats || []), ...(n.deep || [])].map(c => el("span", { class: "tag" }, catLabel(c), catStats[c] ? el("em", {}, catStats[c].in_range || 0) : null)))))),
+        el("div", { class: "row" }, numField("shop_min_revenue_day"), numField("shop_track_min_sold"), numField("hot_video_days")),
         el("div", { class: "row" }, numField("retire_below_per_day")),
-        tagEditor("cats", cats, "Kategóriák", "Zöld szám: hány ársávba eső terméket hozott az utolsó futásnál. Új kategóriát a TikTok Shop kategóriaoldal linkjével adhatsz hozzá.",
-          "pl. shop.tiktok.com/us/c/fitness/835336", (x) => { const m = x.match(/(?:\/c\/)?([a-z0-9-]+)\/(\d{4,})/i); return m ? m[1].toLowerCase() + "/" + m[2] : null; },
-          (c) => [catLabel(c), catStats[c] ? el("em", {}, catStats[c].in_range || 0) : null]),
         tagEditor("brands", brands, "Ismert márkák", "Ezeknek a termékei „Márkás” jelölést kapnak és kimaradnak a listákból (ha a terméknév ezzel kezdődik, vagy a bolt neve ez).",
           "pl. VEVOR", (x) => x.slice(0, 40), (b) => b)),
-      el("div", { class: "card wide" }, el("h2", {}, "Női ruha"),
-        el("p", {}, "Ezeket a női ruházati kategóriákat külön, alaposabban nézi át minden reggel. Ismert márkák termékeit nem menti el."),
-        el("div", { class: "row" }, numField("fashion_min_price"), numField("fashion_max_price"), numField("fashion_fetches_per_category")),
-        tagEditor("fcats", fcats, "Női ruha kategóriák", "Zöld szám: hány ársávba eső terméket hozott az utolsó futásnál.",
-          "pl. shop.tiktok.com/us/c/women-s-dresses/842504", (x) => { const m = x.match(/(?:\/c\/)?([a-z0-9-]+)\/(\d{4,})/i); return m ? m[1].toLowerCase() + "/" + m[2] : null; },
-          (c) => [catLabel(c), catStats[c] ? el("em", {}, catStats[c].in_range || 0) : null])),
       el("div", { class: "card" }, el("h2", {}, "Videógyűjtés: hol keressen"), el("p", {}, "Ezeknek a hashtageknek a friss videóit nézi át minden reggel."),
         tagEditor("tags", tags, "Hashtagek", "Enterrel is hozzáadhatod, # nélkül.", "pl. tiktokshopfinds", (x) => x.toLowerCase().replace(/^#/, "").replace(/[^a-z0-9_]/g, "") || null, (t) => "#" + t),
         numField("videos_per_hashtag"), boolField("include_trending"), numField("trending_count")),
@@ -1075,13 +1199,20 @@
     const note = document.querySelector(".savebar span");
     const vals = {};
     for (const [k, label, lo, hi] of NUM) {
+      if (!$("s-" + k)) continue;
       const n = Number($("s-" + k).value);
       if (!Number.isFinite(n) || !Number.isInteger(n) || n < lo || n > hi) { note.textContent = `Ellenőrizd: „${label}”. ${nf(lo)} és ${nf(hi)} közötti egész szám kell.`; $("s-" + k).focus(); return; }
       vals[k] = n;
     }
-    for (const [k] of BOOL) vals[k] = $("s-" + k).checked;
+    for (const [k] of BOOL) if ($("s-" + k)) vals[k] = $("s-" + k).checked;
+    const niches = [];
+    for (const n of nicheList()) {
+      const lo = Number($(`n-${n.key}-min`).value), hi = Number($(`n-${n.key}-max`).value), ld = Number($(`n-${n.key}-loads`).value);
+      if (![lo, hi, ld].every(Number.isFinite) || lo < 0 || hi <= lo || ld < 0 || ld > 60) { note.textContent = `Ellenőrizd: „${n.label}”. A minimum ár legyen kisebb a maximumnál, az oldalszám 0 és 60 között.`; $(`n-${n.key}-min`).focus(); return; }
+      niches.push({ ...n, min_price: lo, max_price: hi, loads: Math.round(ld) });
+    }
+    if (niches.length) vals.niches = niches;
     if (vals.shop_min_price >= vals.shop_max_price || vals.fashion_min_price >= vals.fashion_max_price) { note.textContent = "A minimum ár legyen kisebb a maximum árnál."; return; }
-    if (!cats.length) { note.textContent = "Legalább egy kategória kell."; return; }
     if (!tags.length) { note.textContent = "Legalább egy hashtag kell."; return; }
     Object.assign(vals, { hashtags: tags.slice(), shop_categories: cats.slice(), fashion_categories: fcats.slice(), known_brands: brands.slice() });
     $("save").disabled = true; $("save").textContent = "Mentés…";
