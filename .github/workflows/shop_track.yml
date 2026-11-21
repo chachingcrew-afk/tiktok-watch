@@ -23,6 +23,10 @@ jobs:
       - run: python shop_track.py
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: termekradar-media
           PROXY_URL: ${{ secrets.PROXY_URL }}
           SHOP_CONCURRENCY: '16'
           SHOP_PAGE_BUDGET_S: '2700'

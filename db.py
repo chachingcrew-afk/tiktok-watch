@@ -303,13 +303,26 @@ def products_without_gallery(conn, min_sold: int, limit: int) -> list[tuple[str,
         return cur.fetchall()
 
 
+KEEP_GALLERY_DATA = os.environ.get("KEEP_GALLERY_DATA", "1") == "1"   # until the website reads galleries from R2
+
+
 def save_gallery(conn, product_id: str, images: list[str]) -> None:
+    """Gallery images go to Cloudflare R2 when it is configured (the database keeps the key), else into the database."""
+    import base64
+    import media_store
+    r2 = media_store.enabled()
     with conn.cursor() as cur:
         cur.execute("delete from tiktok_watch.shop_product_images where product_id = %s", (product_id,))
         for i, img in enumerate(images):
             data, url = img if isinstance(img, tuple) else (img, None)
-            cur.execute("insert into tiktok_watch.shop_product_images (product_id, idx, data, url) values (%s,%s,%s,%s)",
-                        (product_id, i, data, url))
+            key = None
+            if r2:
+                try:
+                    key = media_store.put(f"gallery/{product_id}/{i}.webp", base64.b64decode(data), "image/webp")
+                except Exception:
+                    key = None
+            cur.execute("insert into tiktok_watch.shop_product_images (product_id, idx, data, url, r2_key) values (%s,%s,%s,%s,%s)",
+                        (product_id, i, data if (not key or KEEP_GALLERY_DATA) else None, url, key))
         cur.execute("update tiktok_watch.shop_products set gallery_at = now(), gallery_count = %s where product_id = %s",
                     (len(images), product_id))
 
