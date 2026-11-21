@@ -1,7 +1,7 @@
 name: Facebook ads (Meta Ad Library)
 
-# Every 3 hours (GitHub may start it later): niche keywords, products of the list (best sellers first)
-# and watched pages, read from the public Ad Library through the proxy. Separate from every other job.
+# Niche keywords, products of the list (best sellers first) and watched pages, read from the public Ad Library
+# through the proxy. GitHub starts schedules only every few hours, so one run works for up to 5 hours.
 on:
   schedule:
     - cron: '29 */3 * * *'
@@ -19,7 +19,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 70
+    timeout-minutes: 330
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,9 +32,9 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           PROXY_URL: ${{ secrets.PROXY_URL }}
-          FB_PRODUCTS: '40'
+          FB_PRODUCTS: '250'
           FB_TEST_QUERY: ${{ inputs.test_query }}
-          FB_TIME_BUDGET_S: '3300'
+          FB_TIME_BUDGET_S: '17400'
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}

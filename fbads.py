@@ -34,9 +34,11 @@ from session import setup_logging
 
 log = logging.getLogger("fbads")
 
-BASE = "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&is_targeted_country=false&media_type=all"
+BASE = "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&is_targeted_country=false"
 PAUSE = (6.0, 12.0)                     # seconds between two searches
-SCROLLS = int(os.environ.get("FB_SCROLLS", "6"))  # extra pages of ads per search (about 30 ads each, if Facebook loads them)
+# Logged out, Facebook answers "Rate limit exceeded" to every further page, so a search gives its first 30 ads.
+# More ads come from more searches: more keywords, and each niche keyword once for video and once for image ads.
+SCROLLS = int(os.environ.get("FB_SCROLLS", "0"))
 PRODUCTS_PER_RUN = int(os.environ.get("FB_PRODUCTS", "40"))
 PRODUCT_REFRESH_DAYS = int(os.environ.get("FB_PRODUCT_REFRESH_DAYS", "7"))
 NICHE_REFRESH_HOURS = int(os.environ.get("FB_NICHE_REFRESH_HOURS", "20"))
@@ -266,8 +268,10 @@ def niches_due(conn) -> list[tuple[str, str]]:
     for niche, words in kw.items():
         for w in words or []:
             w = str(w).strip().lower()[:80]
-            if w and (w not in last or (now - last[w]).total_seconds() > NICHE_REFRESH_HOURS * 3600):
-                out.append((niche, w))
+            for media in ("video", "image"):
+                k = f"{w}|{media}"
+                if w and (k not in last or (now - last[k]).total_seconds() > NICHE_REFRESH_HOURS * 3600):
+                    out.append((niche, k))
     random.shuffle(out)
     return out
 
@@ -295,11 +299,15 @@ async def run(conn) -> None:
     start = time.monotonic()
     test = os.environ.get("FB_TEST_QUERY", "").strip()
     if test:   # one search, to see how many ads a search brings (manual runs)
-        jobs = [("niche", test.lower(), test.lower(), None)]
+        jobs = [("niche", test.lower() + "|video", test.lower(), None)]
     else:
         jobs = [("page", pid, None, None) for pid in pages_due(conn)]
-        jobs += [("niche", w, w, n) for n, w in niches_due(conn)]
-        jobs += [("product", pid, product_query(t), n) for pid, t, n in products_due(conn)]
+        niche_jobs = [("niche", k, k.split("|")[0], n) for n, k in niches_due(conn)]
+        product_jobs = [("product", pid, product_query(t), n) for pid, t, n in products_due(conn)]
+        # mix them: about 3 niche searches to 2 product checks, so neither waits for the other
+        while niche_jobs or product_jobs:
+            jobs += niche_jobs[:3] + product_jobs[:2]
+            niche_jobs, product_jobs = niche_jobs[3:], product_jobs[2:]
     STATS["due"] = len(jobs)
     async with async_playwright() as pw:
         async def open_browser(proxy):
@@ -318,7 +326,8 @@ async def run(conn) -> None:
                     save_search(conn, kind, key, query, niche, None, [], "túl rövid keresőkifejezés")
                     conn.commit()
                     continue
-                url = BASE + (f"&search_type=page&view_all_page_id={key}" if kind == "page" else f"&q={quote(query)}&search_type=keyword_unordered")
+                media = key.split("|")[1] if kind == "niche" and "|" in key else "all"
+                url = BASE + f"&media_type={media}" + (f"&search_type=page&view_all_page_id={key}" if kind == "page" else f"&q={quote(query)}&search_type=keyword_unordered")
                 await asyncio.sleep(random.uniform(*PAUSE))
                 try:
                     ads, est = await search(page, url)
