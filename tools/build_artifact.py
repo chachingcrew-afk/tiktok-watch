@@ -70,7 +70,7 @@ SHIM = r"""
   for (const k of ["signUp", "signInWithPassword", "signInWithOAuth", "resetPasswordForEmail", "updateUser"])
     auth[k] = async () => ({ data: null, error: { message: "A belépés itt nem kell: a claude.ai Supabase connectorán keresztül fut." } });
   window.supabase = { createClient: () => ({ auth, rpc }) };
-  window.TR_CONFIG = { supabaseUrl: "", supabaseKey: "" };
+  window.TR_CONFIG = { supabaseUrl: "", supabaseKey: "", mediaUrl: "https://pub-118a4cc7721840ce9f18b2d83daf59af.r2.dev" };
 })();
 </script>
 """
