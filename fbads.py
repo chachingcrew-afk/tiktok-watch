@@ -28,6 +28,7 @@ from urllib.parse import quote, urlparse
 from playwright.async_api import async_playwright
 
 import db
+import media_store
 from core import proxy_settings
 from session import setup_logging
 
@@ -41,6 +42,8 @@ PRODUCT_REFRESH_DAYS = int(os.environ.get("FB_PRODUCT_REFRESH_DAYS", "7"))
 NICHE_REFRESH_HOURS = int(os.environ.get("FB_NICHE_REFRESH_HOURS", "20"))
 PAGE_REFRESH_HOURS = int(os.environ.get("FB_PAGE_REFRESH_HOURS", "20"))
 TIME_BUDGET_S = int(os.environ.get("FB_TIME_BUDGET_S", "3000"))
+VIDEO_MIN_DAYS = int(os.environ.get("FB_VIDEO_MIN_DAYS", "14"))   # videos are big: keep them for ads that run at least this long
+VIDEO_MAX_MB = int(os.environ.get("FB_VIDEO_MAX_MB", "30"))
 STATS: Counter = Counter()
 
 STOP = set("""a an and the for with of to in on by from your you our my is are be at as or this that new hot best top
@@ -139,6 +142,47 @@ def save_search(conn, kind, key, query, niche, est, ads, error=None) -> None:
                     (kind, key, query, niche, est, len(ads), [x["id"] for x in ads], error))
 
 
+def store_media(conn, ads: list[dict], proxies: dict | None, watched: bool = False) -> None:
+    """Copy the creatives of new ads to R2 while Facebook's links still work (they expire in a few days)."""
+    if not media_store.enabled() or not ads:
+        return
+    with conn.cursor() as cur:
+        cur.execute("select ad_archive_id, image_key, video_key, poster_key from tiktok_watch.fb_ads where ad_archive_id = any(%s)", ([x["id"] for x in ads],))
+        have = {r[0]: r[1:] for r in cur.fetchall()}
+    now = datetime.now(timezone.utc)
+    for x in ads:
+        img_k, vid_k, pos_k = have.get(x["id"], (None, None, None))
+        upd = {}
+        try:
+            if x["image"] and not img_k:
+                raw = media_store.download(x["image"], 15 * 2**20, proxies)
+                w = media_store.webp(raw) if raw else None
+                if w:
+                    upd["image_key"] = media_store.put(f"fb/{x['id']}.webp", w, "image/webp")
+            if x["preview"] and not pos_k:
+                raw = media_store.download(x["preview"], 15 * 2**20, proxies)
+                w = media_store.webp(raw) if raw else None
+                if w:
+                    upd["poster_key"] = media_store.put(f"fb/{x['id']}-poster.webp", w, "image/webp")
+            days = (now - x["start"]).days if x["start"] else 0
+            if x["video"] and not vid_k and (watched or days >= VIDEO_MIN_DAYS or (x["collation_count"] or 0) >= 3):
+                raw = media_store.download(x["video"], VIDEO_MAX_MB * 2**20, proxies, timeout=90)
+                if raw:
+                    upd["video_key"] = media_store.put(f"fb/{x['id']}.mp4", raw, "video/mp4")
+                    STATS["media_mb"] += round(len(raw) / 2**20, 1)
+                else:
+                    STATS["videos_skipped"] += 1
+        except Exception as e:
+            STATS["media_errors"] += 1
+            log.warning("media %s: %s", x["id"], e)
+        if upd:
+            STATS["media_saved"] += len(upd)
+            sets = ", ".join(f"{k} = %s" for k in upd)
+            with conn.cursor() as cur:
+                cur.execute(f"update tiktok_watch.fb_ads set {sets} where ad_archive_id = %s", (*upd.values(), x["id"]))
+    conn.commit()
+
+
 class Blocked(Exception):
     pass
 
@@ -229,7 +273,7 @@ def products_due(conn) -> list[tuple[str, str, str]]:
 
 
 async def run(conn) -> None:
-    pw_proxy, _ = proxy_settings(os.environ.get("PROXY_URL"))
+    pw_proxy, req_proxies = proxy_settings(os.environ.get("PROXY_URL"))
     start = time.monotonic()
     jobs: list[tuple] = [("page", pid, None, None) for pid in pages_due(conn)]
     jobs += [("niche", w, w, n) for n, w in niches_due(conn)]
@@ -266,6 +310,7 @@ async def run(conn) -> None:
                 save_ads(conn, ads, niche if kind != "page" else None, query)
                 save_search(conn, kind, key, query, niche, est, ads)
                 conn.commit()
+                await asyncio.to_thread(store_media, conn, ads, req_proxies, kind == "page")
                 STATS[kind + "_searches"] += 1
                 empty_in_row = empty_in_row + 1 if not ads and est is None else 0
                 if empty_in_row >= 4:   # pages keep coming back without ads: Facebook is probably limiting us
