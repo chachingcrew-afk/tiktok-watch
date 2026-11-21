@@ -36,8 +36,8 @@ log = logging.getLogger("fbads")
 
 BASE = "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&is_targeted_country=false&media_type=all"
 PAUSE = (6.0, 12.0)                     # seconds between two searches
-SCROLLS = int(os.environ.get("FB_SCROLLS", "3"))  # extra pages of ads per search (about 30 ads each, if Facebook loads them)
-PRODUCTS_PER_RUN = int(os.environ.get("FB_PRODUCTS", "60"))
+SCROLLS = int(os.environ.get("FB_SCROLLS", "6"))  # extra pages of ads per search (about 30 ads each, if Facebook loads them)
+PRODUCTS_PER_RUN = int(os.environ.get("FB_PRODUCTS", "40"))
 PRODUCT_REFRESH_DAYS = int(os.environ.get("FB_PRODUCT_REFRESH_DAYS", "7"))
 NICHE_REFRESH_HOURS = int(os.environ.get("FB_NICHE_REFRESH_HOURS", "20"))
 PAGE_REFRESH_HOURS = int(os.environ.get("FB_PAGE_REFRESH_HOURS", "20"))
@@ -202,6 +202,9 @@ async def search(page, url: str) -> tuple[list[dict], int | None]:
             try:
                 t = await asyncio.wait_for(r.text(), 15)
                 for line in t.splitlines():
+                    line = line.strip().removeprefix("for (;;);")   # Facebook prefixes its JSON with this guard
+                    if not line.startswith("{"):
+                        continue
                     try:
                         find_ads(json.loads(line), gql)
                     except ValueError:
@@ -224,12 +227,21 @@ async def search(page, url: str) -> tuple[list[dict], int | None]:
         body = await page.inner_text("body")
         m = re.search(r"~?\s*([\d,]+)\s+results?", body)
         est = int(m.group(1).replace(",", "")) if m else (0 if re.search(r"No ads match|0 results", body) else None)
+        misses = 0
         for _ in range(SCROLLS if est is None or est > len(ads) else 0):
             n = len(gql)
+            for _step in range(4):   # scroll in steps, like a person, so the next page of ads loads
+                await page.mouse.wheel(0, 2500)
+                await page.wait_for_timeout(700)
             await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await page.wait_for_timeout(4500)
+            await page.wait_for_timeout(3500)
             if len(gql) == n:
-                break
+                misses += 1
+                if misses >= 2:
+                    break
+            else:
+                misses = 0
+        STATS["gql_ads"] += len(gql)
         seen, out = set(), []
         for a in ads + gql:
             k = str(a.get("ad_archive_id"))
@@ -281,9 +293,13 @@ def products_due(conn) -> list[tuple[str, str, str]]:
 async def run(conn) -> None:
     pw_proxy, req_proxies = proxy_settings(os.environ.get("PROXY_URL"))
     start = time.monotonic()
-    jobs: list[tuple] = [("page", pid, None, None) for pid in pages_due(conn)]
-    jobs += [("niche", w, w, n) for n, w in niches_due(conn)]
-    jobs += [("product", pid, product_query(t), n) for pid, t, n in products_due(conn)]
+    test = os.environ.get("FB_TEST_QUERY", "").strip()
+    if test:   # one search, to see how many ads a search brings (manual runs)
+        jobs = [("niche", test.lower(), test.lower(), None)]
+    else:
+        jobs = [("page", pid, None, None) for pid in pages_due(conn)]
+        jobs += [("niche", w, w, n) for n, w in niches_due(conn)]
+        jobs += [("product", pid, product_query(t), n) for pid, t, n in products_due(conn)]
     STATS["due"] = len(jobs)
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True, proxy=pw_proxy)
