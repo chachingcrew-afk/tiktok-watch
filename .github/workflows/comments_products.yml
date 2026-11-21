@@ -1,7 +1,8 @@
 name: Product video comments (hourly)
 
-# Every hour: the relevant comments of the creator videos of the listed products, best sellers first,
-# about 35 products per run (comments.py --products). Separate from every other job.
+# The relevant comments of the creator videos of the listed products, starred and best sellers first
+# (comments.py --products). Separate from every other job. GitHub starts hourly schedules only every
+# few hours, so one run keeps going for up to 5 hours; a new one starts when it ends (runs never overlap).
 on:
   schedule:
     - cron: '7 * * * *'
@@ -14,7 +15,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 58
+    timeout-minutes: 330
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,5 +29,5 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           PROXY_URL: ${{ secrets.PROXY_URL }}
           MS_TOKEN: ${{ secrets.MS_TOKEN }}
-          COMMENT_PRODUCTS: '35'
-          COMMENT_TIME_BUDGET_S: '2700'
+          COMMENT_PRODUCTS: '400'
+          COMMENT_TIME_BUDGET_S: '17400'
