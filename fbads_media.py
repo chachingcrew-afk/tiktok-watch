@@ -16,8 +16,8 @@ with conn.cursor() as cur:
                          or poster_key is null and video_preview is not null or video_key is null and video_url is not null)
                    order by last_seen desc""")
     rows = cur.fetchall()
-for i in range(0, len(rows), 25):
-    chunk = rows[i:i + 25]
+for i in range(0, len(rows), 60):
+    chunk = rows[i:i + 60]
     for watched in (True, False):
         ads = [{"id": r[0], "image": r[1], "video": r[2], "preview": r[3], "start": r[4], "collation_count": r[5]} for r in chunk if r[6] == watched]
         fbads.store_media(conn, ads, proxies, watched)

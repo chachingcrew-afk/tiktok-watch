@@ -150,23 +150,24 @@ def store_media(conn, ads: list[dict], proxies: dict | None, watched: bool = Fal
         cur.execute("select ad_archive_id, image_key, video_key, poster_key from tiktok_watch.fb_ads where ad_archive_id = any(%s)", ([x["id"] for x in ads],))
         have = {r[0]: r[1:] for r in cur.fetchall()}
     now = datetime.now(timezone.utc)
-    for x in ads:
+
+    def one(x):
         img_k, vid_k, pos_k = have.get(x["id"], (None, None, None))
         upd = {}
         try:
             if x["image"] and not img_k:
-                raw = media_store.download(x["image"], 15 * 2**20, proxies)
+                raw = media_store.download(x["image"], 15 * 2**20, None)
                 w = media_store.webp(raw) if raw else None
                 if w:
                     upd["image_key"] = media_store.put(f"fb/{x['id']}.webp", w, "image/webp")
             if x["preview"] and not pos_k:
-                raw = media_store.download(x["preview"], 15 * 2**20, proxies)
+                raw = media_store.download(x["preview"], 15 * 2**20, None)
                 w = media_store.webp(raw) if raw else None
                 if w:
                     upd["poster_key"] = media_store.put(f"fb/{x['id']}-poster.webp", w, "image/webp")
             days = (now - x["start"]).days if x["start"] else 0
             if x["video"] and not vid_k and (watched or days >= VIDEO_MIN_DAYS or (x["collation_count"] or 0) >= 3):
-                raw = media_store.download(x["video"], VIDEO_MAX_MB * 2**20, proxies, timeout=90)
+                raw = media_store.download(x["video"], VIDEO_MAX_MB * 2**20, None, timeout=60)
                 if raw:
                     upd["video_key"] = media_store.put(f"fb/{x['id']}.mp4", raw, "video/mp4")
                     STATS["media_mb"] += round(len(raw) / 2**20, 1)
@@ -175,12 +176,17 @@ def store_media(conn, ads: list[dict], proxies: dict | None, watched: bool = Fal
         except Exception as e:
             STATS["media_errors"] += 1
             log.warning("media %s: %s", x["id"], e)
-        if upd:
-            STATS["media_saved"] += len(upd)
-            sets = ", ".join(f"{k} = %s" for k in upd)
-            with conn.cursor() as cur:
-                cur.execute(f"update tiktok_watch.fb_ads set {sets} where ad_archive_id = %s", (*upd.values(), x["id"]))
-    conn.commit()
+        return x["id"], upd
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(6) as ex:
+        for ad_id, upd in ex.map(one, ads):
+            if upd:
+                STATS["media_saved"] += len(upd)
+                sets = ", ".join(f"{k} = %s" for k in upd)
+                with conn.cursor() as cur:
+                    cur.execute(f"update tiktok_watch.fb_ads set {sets} where ad_archive_id = %s", (*upd.values(), ad_id))
+                conn.commit()
 
 
 class Blocked(Exception):

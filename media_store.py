@@ -40,7 +40,11 @@ def download(url: str, max_bytes: int, proxies: dict | None = None, timeout: int
         if int(r.headers.get("content-length") or 0) > max_bytes:
             return None
         buf = io.BytesIO()
+        import time as _t
+        t0 = _t.monotonic()
         for chunk in r.iter_content(256 * 1024):
+            if _t.monotonic() - t0 > timeout * 2:   # a stalled transfer: give up
+                return None
             buf.write(chunk)
             if buf.tell() > max_bytes:
                 return None
