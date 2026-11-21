@@ -1,8 +1,10 @@
 name: Scan TikTok Shop categories (every 2 hours)
 
+# GitHub starts schedules only every few hours, so one run keeps scanning for almost 6 hours:
+# a new pass every 2 hours (or right after the previous one, if that took longer). Runs never overlap.
 on:
   schedule:
-    - cron: '23 */2 * * *'   # every 2 hours: look for new products (GitHub may start it late)
+    - cron: '23 */2 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -12,7 +14,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 110
+    timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -21,7 +23,17 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - run: python -m pytest -q tests
-      - run: python shop.py
+      - name: Scan, a pass every 2 hours
+        run: |
+          while true; do
+            start=$SECONDS
+            timeout 150m python shop.py || echo "pass ended with an error or over 150 minutes"
+            used=$(( SECONDS - start ))
+            wait=$(( 7200 - used )); [ $wait -lt 0 ] && wait=0
+            # stop when another pass would not fit in the run (about 5 h 45 min with setup)
+            if [ $(( SECONDS + wait + 9000 )) -gt 20400 ]; then break; fi
+            sleep $wait
+          done
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
