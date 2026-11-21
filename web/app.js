@@ -716,7 +716,10 @@
   function fbCard(a) {
     const days = fbDays(a);
     const vid = media(a.video_key) || a.video_url, poster = media(a.poster_key) || a.video_preview, img = media(a.image_key) || a.image_url;
-    const box = vid
+    const box = !CFG.supabaseUrl   // the chat version may not load outside pictures or videos
+      ? el("a", { class: "fb-media fb-noimg", href: fbLib(a.id), target: "_blank", rel: "noopener noreferrer" },
+          `${vid ? "Videó" : img ? "Kép" : a.display_format || "Hirdetés"}: a chates nézet nem tölt be külső képet és videót. A Netlify-os oldalon látszik, vagy nyisd meg a Hirdetéstárban ↗`)
+      : vid
       ? el("video", { src: vid, poster: poster || null, controls: "", preload: "none", playsinline: "", class: "fb-media" })
       : img ? el("img", { src: img, alt: a.title || "Hirdetés képe", loading: "lazy", referrerpolicy: "no-referrer", class: "fb-media",
           onerror: (e) => { e.target.replaceWith(el("div", { class: "fb-media fb-noimg" }, "A kép lejárt vagy nem tölthető be")); } })
