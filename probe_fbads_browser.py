@@ -53,7 +53,7 @@ async def attempt(pw, proxy):
             if "/api/graphql" in r.url:
                 res["graphql"] += 1
                 try:
-                    t = await r.text()
+                    t = await asyncio.wait_for(r.text(), 15)
                     for line in t.splitlines():
                         try:
                             find_ads(json.loads(line), gql_ads)
@@ -99,15 +99,21 @@ async def attempt(pw, proxy):
 
 
 async def main():
-    conn = db.connect()
-    rid = db.start_run(conn, "probe_fbads")
     out = {"q": Q}
     async with async_playwright() as pw:
-        out["direct"] = await attempt(pw, None)
+        async def guarded(proxy):
+            try:
+                return await asyncio.wait_for(attempt(pw, proxy), 150)
+            except asyncio.TimeoutError:
+                return {"proxy": bool(proxy), "error": "timeout after 150 s"}
+        out["direct"] = await guarded(None)
+        print("direct", json.dumps(out["direct"])[:1500], flush=True)
         pw_proxy, _ = proxy_settings(os.environ.get("PROXY_URL"))
         if pw_proxy:
             await asyncio.sleep(5)
-            out["proxy"] = await attempt(pw, pw_proxy)
+            out["proxy"] = await guarded(pw_proxy)
+    conn = db.connect()
+    rid = db.start_run(conn, "probe_fbads")
     db.finish_run(conn, rid, True, out)
     print(json.dumps(out, indent=1)[:4000])
 
