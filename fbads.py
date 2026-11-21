@@ -302,9 +302,12 @@ async def run(conn) -> None:
         jobs += [("product", pid, product_query(t), n) for pid, t, n in products_due(conn)]
     STATS["due"] = len(jobs)
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True, proxy=pw_proxy)
-        ctx = await browser.new_context(locale="en-US", viewport={"width": 1280, "height": 900})
-        page = await ctx.new_page()
+        async def open_browser(proxy):
+            b = await pw.chromium.launch(headless=True, proxy=proxy)
+            c = await b.new_context(locale="en-US", viewport={"width": 1280, "height": 900})
+            return b, await c.new_page()
+        browser, page = await open_browser(pw_proxy)
+        using_proxy = bool(pw_proxy)
         empty_in_row = 0
         try:
             for kind, key, query, niche in jobs:
@@ -324,10 +327,23 @@ async def run(conn) -> None:
                     log.warning("Facebook asked for a login or a check (%s): stopping this run", e)
                     break
                 except Exception as e:
-                    STATS["errors"] += 1
-                    save_search(conn, kind, key, query, niche, None, [], f"{type(e).__name__}: {str(e)[:200]}")
-                    conn.commit()
-                    continue
+                    if using_proxy and re.search(r"ERR_(TUNNEL|PROXY)|ERR_TIMED_OUT|Timeout", str(e)):
+                        # the proxy is down or too slow: carry on without it, and retry this search
+                        STATS["proxy_dropped"] = 1
+                        await browser.close()
+                        browser, page = await open_browser(None)
+                        using_proxy = False
+                        try:
+                            ads, est = await search(page, url)
+                        except Exception as e2:
+                            e = e2
+                        else:
+                            e = None
+                    if e is not None:
+                        STATS["errors"] += 1
+                        save_search(conn, kind, key, query, niche, None, [], f"{type(e).__name__}: {str(e)[:200]}")
+                        conn.commit()
+                        continue
                 # page and niche searches keep every ad; a product search keeps the ads, labelled with the product's niche
                 save_ads(conn, ads, niche if kind != "page" else None, query)
                 save_search(conn, kind, key, query, niche, est, ads)
