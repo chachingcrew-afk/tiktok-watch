@@ -1,6 +1,8 @@
 (() => {
   "use strict";
   const CFG = window.TR_CONFIG;
+  // files on Cloudflare R2 (gallery images, Facebook ad creatives): public bucket URL from config.js
+  const media = (key) => key && CFG.mediaUrl ? CFG.mediaUrl.replace(/\/$/, "") + "/" + key : null;
   const sb = window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { auth: { persistSession: true, detectSessionInUrl: true } });
 
   // ---------- helpers ----------
@@ -713,13 +715,14 @@
   }
   function fbCard(a) {
     const days = fbDays(a);
-    const media = a.video_url
-      ? el("video", { src: a.video_url, poster: a.video_preview || null, controls: "", preload: "none", playsinline: "", class: "fb-media" })
-      : a.image_url ? el("img", { src: a.image_url, alt: a.title || "Hirdetés képe", loading: "lazy", referrerpolicy: "no-referrer", class: "fb-media",
+    const vid = media(a.video_key) || a.video_url, poster = media(a.poster_key) || a.video_preview, img = media(a.image_key) || a.image_url;
+    const box = vid
+      ? el("video", { src: vid, poster: poster || null, controls: "", preload: "none", playsinline: "", class: "fb-media" })
+      : img ? el("img", { src: img, alt: a.title || "Hirdetés képe", loading: "lazy", referrerpolicy: "no-referrer", class: "fb-media",
           onerror: (e) => { e.target.replaceWith(el("div", { class: "fb-media fb-noimg" }, "A kép lejárt vagy nem tölthető be")); } })
       : el("div", { class: "fb-media fb-noimg" }, a.display_format || "Nincs kép");
     const watched = (FB.pages || []).some(p => p.page_id === a.page_id);
-    return el("article", { class: "fb-card" }, media,
+    return el("article", { class: "fb-card" }, box,
       el("div", { class: "fb-body" },
         el("div", { class: "fb-badges" },
           days != null ? el("span", { class: "chip " + (days >= 90 ? "money" : days >= 30 ? "blue" : "") }, `${nf(days)} napja fut`) : null,
@@ -892,7 +895,8 @@
   }
   function galleryEl(p) {
     const imgs = cache.gallery[p.product_id];
-    const list = Array.isArray(imgs) && imgs.length ? imgs.map(b => "data:image/webp;base64," + b) : (p.image ? [sized(p.image, 600)] : []);
+    const list = Array.isArray(imgs) && imgs.length ? imgs.map(b => b.startsWith("r2:") ? media(b.slice(3)) : "data:image/webp;base64," + b).filter(Boolean)
+      : (p.image ? [sized(p.image, 600)] : []);
     if (galIdx >= list.length) galIdx = 0;
     const main = el("div", { class: "gal-main" });
     if (list.length) main.append(el("img", { src: list[galIdx], alt: p.title || "", referrerpolicy: "no-referrer", class: "zoomable", title: "Kattints a nagyításhoz",
@@ -943,7 +947,8 @@
   const isFresh = (v) => !!v.upload_time && Date.now() - new Date(v.upload_time).getTime() < setting("hot_video_days") * 864e5;
   function vcover(v, ...overlay) {
     const box = el("div", { class: "vcover" }, ...overlay);
-    if (v.cover) box.prepend(el("img", { src: "data:image/jpeg;base64," + v.cover, alt: "" }));
+    const cv = v.cover ? (v.cover.startsWith("r2:") ? media(v.cover.slice(3)) : "data:image/jpeg;base64," + v.cover) : null;
+    if (cv) box.prepend(el("img", { src: cv, alt: "" }));
     else coverFor(v, box);
     return box;
   }

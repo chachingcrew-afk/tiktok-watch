@@ -371,13 +371,24 @@ def mark_videos_checked(conn, product_id: str) -> None:
 
 
 def save_product_videos(conn, product_id: str, videos: list[dict], keep_covers: bool) -> None:
+    import base64
+    import media_store
+    r2 = media_store.enabled()
     with conn.cursor() as cur:
         for v in videos:
+            cover, key = (v.get("cover") if keep_covers else None), None
+            if cover and r2:
+                try:
+                    key = media_store.put(f"cover/{product_id}/{v['item_id']}.jpg", base64.b64decode(cover), "image/jpeg")
+                    if not KEEP_GALLERY_DATA:
+                        cover = None
+                except Exception:
+                    key = None
             cur.execute(
                 """
                 insert into tiktok_watch.shop_product_videos
-                  (product_id, item_id, author_id, author_name, title, upload_time, duration_ms, play_count, like_count, cover, rank)
-                values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                  (product_id, item_id, author_id, author_name, title, upload_time, duration_ms, play_count, like_count, cover, rank, cover_key)
+                values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 on conflict (product_id, item_id) do update set
                   prev_play_count = tiktok_watch.shop_product_videos.play_count,
                   prev_like_count = tiktok_watch.shop_product_videos.like_count,
@@ -386,10 +397,11 @@ def save_product_videos(conn, product_id: str, videos: list[dict], keep_covers: 
                   title = coalesce(excluded.title, tiktok_watch.shop_product_videos.title),
                   author_name = coalesce(excluded.author_name, tiktok_watch.shop_product_videos.author_name),
                   cover = coalesce(excluded.cover, tiktok_watch.shop_product_videos.cover),
+                  cover_key = coalesce(excluded.cover_key, tiktok_watch.shop_product_videos.cover_key),
                   rank = excluded.rank, checked_at = now()
                 """,
                 (product_id, v["item_id"], v.get("author_id"), v.get("author_name"), v.get("title"), v.get("upload_time"),
-                 v.get("duration_ms"), v.get("play_count"), v.get("like_count"), v.get("cover") if keep_covers else None, v.get("rank")),
+                 v.get("duration_ms"), v.get("play_count"), v.get("like_count"), cover, v.get("rank"), key),
             )
         cur.execute(
             "update tiktok_watch.shop_products set videos_checked_at = now(), video_count = %s,"
