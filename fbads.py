@@ -89,6 +89,9 @@ def flat(a: dict) -> dict:
     body = ((s.get("body") or {}).get("text") if isinstance(s.get("body"), dict) else s.get("body")) or c0.get("body")
     if body and "{{product." in body:
         body = c0.get("body") or body
+    title = s.get("title") or c0.get("title")
+    if title and "{{product." in title:   # dynamic catalogue ad: the real name is on the first card
+        title = c0.get("title") or None
     dom = (urlparse(link).hostname or "").removeprefix("www.") if link else None
     return {
         "id": str(a.get("ad_archive_id")), "page_id": str(a.get("page_id") or s.get("page_id") or ""),
@@ -96,7 +99,7 @@ def flat(a: dict) -> dict:
         "page_url": s.get("page_profile_uri"), "page_picture": s.get("page_profile_picture_url"),
         "start": ts(a.get("start_date")), "end": ts(a.get("end_date")), "active": a.get("is_active"),
         "collation_count": a.get("collation_count"), "collation_id": str(a.get("collation_id") or "") or None,
-        "link": link, "domain": dom, "title": s.get("title") or c0.get("title"), "body": body, "caption": s.get("caption"),
+        "link": link, "domain": dom, "title": title, "body": body, "caption": s.get("caption"),
         "cta": s.get("cta_text"), "format": s.get("display_format"),
         "image": img, "video": (vid or {}).get("video_hd_url") or (vid or {}).get("video_sd_url"),
         "preview": (vid or {}).get("video_preview_image_url"),

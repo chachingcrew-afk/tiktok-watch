@@ -162,7 +162,7 @@
   const P = { focus: null, niche: store.get("niche") || "", per: store.get("per") || "day", dir: store.get("dir") || "desc", seg: store.get("seg") || "all", sort: store.get("sort") || "revenue_per_day", q: "", cat: "", pmin: null, pmax: null, page: 0, sel: null };
   const V = { seg: "tracking", sort: "recent_views_per_hour", q: "" };
   const PAGE = 50;
-  const cache = { thumbs: {}, gallery: {}, galurls: {}, videos: {}, hist: {}, reviews: {}, pcomments: {} };
+  const cache = { thumbs: {}, gallery: {}, galurls: {}, videos: {}, hist: {}, reviews: {}, pcomments: {}, fb: {} };
 
   async function startApp(session) {
     show("app");
@@ -224,15 +224,16 @@
 
   // ---------- navigation ----------
   function selectView(v) {
-    if (!["products", "women", "mine", "kits", "videos", "runs", "settings"].includes(v)) v = "products";
+    if (!["products", "women", "mine", "kits", "videos", "fbads", "runs", "settings"].includes(v)) v = "products";
     if (v === "women") { v = "products"; setNiche("fashion", true); }  // old bookmark: women's clothing is the fashion niche now
     nicheHead();
     const navV = v;
     for (const b of document.querySelectorAll(".nav-item")) {
       if (b.dataset.view === navV) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
     }
-    for (const s of ["products", "mine", "kits", "videos", "runs", "settings"]) $("view-" + s).hidden = s !== v;
+    for (const s of ["products", "mine", "kits", "videos", "fbads", "runs", "settings"]) $("view-" + s).hidden = s !== v;
     store.set("view", v);
+    if (v === "fbads") loadFb();
     if (v === "mine") loadMine();
     if (v === "kits") loadKits();
   }
@@ -680,8 +681,148 @@
         el("div", { class: "d-note" }, "A bevétel a mostani ár és a napi eladott darab szorzata, a TikTok Shop eladásszámából. A növekedés: a napi eladás az addig eladott darabok hány százaléka.")),
       videosSection(p),
       commentsSection(p),
+      fbProductSection(p),
       reviewsSection(p));
   }
+  // ---------- Facebook ads (Meta Ad Library, fbads.py) ----------
+  const FB = { niche: store.get("fbniche") || "", tab: "ads", minDays: Number(store.get("fbdays") || 30), active: true, q: "", sort: "days",
+               ads: {}, loading: false, pages: null, page: null, pageAds: null, summary: null, msg: "" };
+  const fbDays = (a) => a.start_date ? Math.max(0, Math.round(((a.end_date && !a.is_active ? new Date(a.end_date) : new Date()) - new Date(a.start_date)) / 864e5)) : null;
+  const fbLib = (id) => `https://www.facebook.com/ads/library/?id=${encodeURIComponent(id)}`;
+  async function loadFb(force) {
+    if (FB.loading) return;
+    const key = FB.niche || "_all";
+    if (!force && FB.ads[key] && FB.summary && FB.pages) { renderFb(); return; }
+    FB.loading = true; renderFb();
+    try {
+      const [ads, summary, pages] = await Promise.all([
+        rpc("tr_fb_ads", { p_niche: FB.niche || null, p_page: null, p_limit: 800 }), rpc("tr_fb_summary"), rpc("tr_fb_pages")]);
+      FB.ads[key] = ads || []; FB.summary = summary || {}; FB.pages = pages || []; FB.msg = "";
+    } catch (e) { FB.msg = errText(e); }
+    FB.loading = false; renderFb();
+  }
+  async function fbOpenPage(pid, name) {
+    FB.tab = "pages"; FB.page = { page_id: pid, name }; FB.pageAds = null; renderFb();
+    try { FB.pageAds = await rpc("tr_fb_ads", { p_niche: null, p_page: pid, p_limit: 400 }) || []; } catch (e) { FB.pageAds = []; FB.msg = errText(e); }
+    renderFb();
+  }
+  async function fbWatch(pid, on, name) {
+    try { await rpc("tr_fb_watch", { p_page_id: pid, p_on: on, p_name: name || null }); FB.pages = await rpc("tr_fb_pages") || []; FB.msg = on ? `Figyelve: ${name || pid}. A következő futásnál lekéri az összes hirdetését.` : "Figyelés leállítva."; }
+    catch (e) { FB.msg = errText(e); }
+    renderFb();
+  }
+  function fbCard(a) {
+    const days = fbDays(a);
+    const media = a.video_url
+      ? el("video", { src: a.video_url, poster: a.video_preview || null, controls: "", preload: "none", playsinline: "", class: "fb-media" })
+      : a.image_url ? el("img", { src: a.image_url, alt: a.title || "Hirdetés képe", loading: "lazy", referrerpolicy: "no-referrer", class: "fb-media",
+          onerror: (e) => { e.target.replaceWith(el("div", { class: "fb-media fb-noimg" }, "A kép lejárt vagy nem tölthető be")); } })
+      : el("div", { class: "fb-media fb-noimg" }, a.display_format || "Nincs kép");
+    const watched = (FB.pages || []).some(p => p.page_id === a.page_id);
+    return el("article", { class: "fb-card" }, media,
+      el("div", { class: "fb-body" },
+        el("div", { class: "fb-badges" },
+          days != null ? el("span", { class: "chip " + (days >= 90 ? "money" : days >= 30 ? "blue" : "") }, `${nf(days)} napja fut`) : null,
+          Number(a.collation_count) > 1 ? el("span", { class: "chip gold", title: "Ugyanennek a hirdetésnek ennyi változata fut: a hirdető skáláz" }, `${nf(a.collation_count)} változat`) : null,
+          a.is_active === false ? el("span", { class: "chip" }, "leállt") : null),
+        el("div", { class: "fb-page" },
+          el("button", { type: "button", class: "link-btn", onclick: () => fbOpenPage(a.page_id, a.page_name) }, a.page_name || a.page_id),
+          a.page_likes ? el("span", { class: "muted" }, ` · ${short(a.page_likes)} követő`) : null),
+        a.title ? el("b", { class: "fb-title" }, a.title) : null,
+        a.body ? el("p", { class: "fb-text" }, a.body) : null,
+        el("div", { class: "fb-links" },
+          a.link_url ? el("a", { href: a.link_url, target: "_blank", rel: "noopener noreferrer" }, (a.domain || "weboldal") + " ↗") : null,
+          el("a", { href: fbLib(a.id), target: "_blank", rel: "noopener noreferrer" }, "Hirdetéstár ↗"),
+          a.page_id ? el("button", { type: "button", class: "link-btn", onclick: () => fbWatch(a.page_id, !watched, a.page_name) }, watched ? "Figyelés leállítása" : "Oldal figyelése") : null)));
+  }
+  function fbFilter(list) {
+    const q = FB.q.trim().toLowerCase();
+    const out = list.filter(a => (!FB.active || a.is_active !== false) && (fbDays(a) ?? 0) >= FB.minDays &&
+      (!q || [a.title, a.body, a.page_name, a.domain, (a.queries || []).join(" ")].join(" ").toLowerCase().includes(q)));
+    const k = FB.sort === "variants" ? (a) => Number(a.collation_count) || 0 : FB.sort === "new" ? (a) => new Date(a.start_date || 0).getTime() : FB.sort === "likes" ? (a) => Number(a.page_likes) || 0 : (a) => fbDays(a) ?? -1;
+    return out.sort((x, y) => k(y) - k(x));
+  }
+  function renderFb() {
+    const root = $("fb-root"); if (!root) return;
+    const sum = FB.summary || {};
+    const pills = el("div", { class: "tabs niches", role: "tablist", "aria-label": "Niche-ek" },
+      el("button", { type: "button", class: "tab", role: "tab", "aria-selected": String(!FB.niche), onclick: () => { FB.niche = ""; store.set("fbniche", ""); loadFb(); } },
+        "Mind", el("em", {}, nf(Object.values(sum).reduce((t, x) => t + (x.n || 0), 0)))),
+      ...nicheList().map(n => el("button", { type: "button", class: "tab", role: "tab", "aria-selected": String(FB.niche === n.key),
+        onclick: () => { FB.niche = n.key; store.set("fbniche", n.key); loadFb(); } }, n.label, el("em", {}, nf((sum[n.key] || {}).n || 0)))));
+    const tabs = el("div", { class: "seg-mini fb-tabs", role: "tablist" },
+      el("button", { type: "button", role: "tab", "aria-selected": String(FB.tab === "ads"), onclick: () => { FB.tab = "ads"; renderFb(); } }, "Nyerő hirdetések"),
+      el("button", { type: "button", role: "tab", "aria-selected": String(FB.tab === "pages"), onclick: () => { FB.tab = "pages"; FB.page = null; renderFb(); } }, `Figyelt oldalak (${(FB.pages || []).length})`));
+    const msg = FB.msg ? el("div", { class: "d-note", role: "status" }, FB.msg) : null;
+    if (FB.tab === "pages") { root.replaceChildren(tabs, msg, fbPagesView()); return; }
+    const list = FB.ads[FB.niche || "_all"];
+    const tools = el("div", { class: "toolbar fb-tools" },
+      el("label", { class: "search" }, el("input", { type: "search", placeholder: "Keresés szövegre, oldalra, domainre", value: FB.q, "aria-label": "Keresés a hirdetések között",
+        oninput: (e) => { FB.q = e.target.value; renderFbGrid(); } })),
+      el("select", { "aria-label": "Legalább ennyi napja fut", onchange: (e) => { FB.minDays = Number(e.target.value); store.set("fbdays", FB.minDays); renderFbGrid(); } },
+        ...[[0, "Bármennyi ideje fut"], [7, "Legalább 7 napja"], [30, "Legalább 30 napja"], [60, "Legalább 60 napja"], [90, "Legalább 90 napja"]].map(([v, l]) => el("option", { value: v, selected: FB.minDays === v ? "" : null }, l))),
+      el("select", { "aria-label": "Rendezés", onchange: (e) => { FB.sort = e.target.value; renderFbGrid(); } },
+        ...[["days", "Legrégebben futó"], ["variants", "Legtöbb változat"], ["new", "Legújabb"], ["likes", "Legnagyobb oldal"]].map(([v, l]) => el("option", { value: v, selected: FB.sort === v ? "" : null }, l))),
+      el("label", { class: "check" }, el("input", { type: "checkbox", checked: FB.active ? "" : null, onchange: (e) => { FB.active = e.target.checked; renderFbGrid(); } }), " Csak ami most is fut"));
+    root.replaceChildren(pills, tabs, msg, tools, el("div", { id: "fb-count", class: "d-note" }), el("div", { id: "fb-grid", class: "fb-grid" }));
+    if (FB.loading && !list) { $("fb-grid").replaceChildren(el("div", { class: "empty" }, "Betöltés…")); return; }
+    renderFbGrid();
+  }
+  function renderFbGrid() {
+    const list = FB.ads[FB.niche || "_all"] || [];
+    const xs = fbFilter(list);
+    $("fb-count").textContent = list.length ? `${nf(xs.length)} hirdetés a ${nf(list.length)}-ból. Ami hónapok óta fut és sok változata van, az hozza a pénzt.` : "";
+    if (!list.length) { $("fb-grid").replaceChildren(el("div", { class: "mine-empty" }, el("b", {}, "Még nincs hirdetés."), el("span", {}, "A Facebook hirdetésgyűjtő 3 óránként fut: a niche kulcsszavakra, a lista termékeire és a figyelt oldalakra keres."))); return; }
+    $("fb-grid").replaceChildren(...xs.slice(0, 240).map(fbCard));
+  }
+  function fbPagesView() {
+    if (FB.page) {
+      const ads = FB.pageAds;
+      return el("div", {},
+        el("div", { class: "fb-pagehead" }, el("button", { type: "button", class: "btn", onclick: () => { FB.page = null; renderFb(); } }, "← Oldalak"),
+          el("h3", {}, FB.page.name || FB.page.page_id),
+          el("a", { class: "btn", href: `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&view_all_page_id=${FB.page.page_id}`, target: "_blank", rel: "noopener noreferrer" }, "Hirdetéstárban ↗"),
+          (FB.pages || []).some(p => p.page_id === FB.page.page_id) ? null : el("button", { type: "button", class: "btn primary", onclick: () => fbWatch(FB.page.page_id, true, FB.page.name) }, "Oldal figyelése")),
+        ads === null ? el("div", { class: "empty" }, "Betöltés…") : el("div", { class: "fb-grid" }, ...ads.map(fbCard)));
+    }
+    const input = el("input", { type: "text", id: "fb-add", placeholder: "Facebook oldal azonosító, vagy Hirdetéstár link (view_all_page_id=…)", "aria-label": "Figyelendő Facebook oldal" });
+    const add = () => {
+      const v = input.value.trim(), m = v.match(/view_all_page_id=(\d+)/) || v.match(/^(\d{5,25})$/);
+      if (!m) { FB.msg = "Másold be az oldal azonosítóját (csak számok), vagy a Hirdetéstárban az oldal linkjét, amiben view_all_page_id= szerepel. Egy hirdetés kártyáján az „Oldal figyelése” gomb is jó."; renderFb(); return; }
+      fbWatch(m[1], true);
+    };
+    const pages = FB.pages || [];
+    return el("div", {},
+      el("div", { class: "fb-add" }, input, el("button", { type: "button", class: "btn primary", onclick: add }, "Figyelés")),
+      pages.length ? el("div", { class: "fb-pages" }, ...pages.map(p => el("div", { class: "fb-pagerow" },
+        el("button", { type: "button", class: "link-btn", onclick: () => fbOpenPage(p.page_id, p.name) }, el("b", {}, p.name || p.page_id)),
+        el("span", {}, `${nf(p.active || 0)} aktív hirdetés`),
+        el("span", { class: Number(p.new_7d) ? "pos" : "muted" }, `${nf(p.new_7d || 0)} új az elmúlt 7 napban`),
+        el("span", { class: "muted" }, p.checked_at ? "frissítve " + ago(p.checked_at) : "még nincs lekérve"),
+        el("button", { type: "button", class: "btn", onclick: () => fbWatch(p.page_id, false) }, "Leállítás"))))
+        : el("div", { class: "mine-empty" }, el("b", {}, "Még nincs figyelt oldal."), el("span", {}, "Egy hirdetés kártyáján az „Oldal figyelése” gombbal, vagy fent az oldal azonosítójával adhatsz hozzá.")));
+  }
+  function fbProductSection(p) {
+    const id = p.product_id;
+    ensure("fb", id, async () => (await rpc("tr_fb_product", { pid: id })) || { none: true });
+    const r0 = cache.fb[id], r = r0 && !r0.none ? r0 : null;
+    let body;
+    if (r0 === undefined || r0 === null) body = el("div", { class: "d-note" }, "Betöltés…");
+    else if (r0 === false) body = el("div", { class: "d-note" }, "Nem sikerült betölteni.");
+    else if (!r) body = el("div", { class: "d-note" }, "Még nincs lekérve. A Facebook hirdetésgyűjtő a lista termékein a legjobban fogyóktól halad lefelé.");
+    else {
+      const ads = r.ads || [];
+      body = el("div", {},
+        el("div", { class: "d-note" }, `Keresés: „${r.query}” · ${r.results_est != null ? `kb. ${nf(r.results_est)} aktív hirdetés az USA-ban` : "nincs találatszám"} · ${ago(r.checked_at)}`,
+          " · ", el("a", { href: BASE_FB + encodeURIComponent(r.query || ""), target: "_blank", rel: "noopener noreferrer" }, "Hirdetéstárban ↗")),
+        ads.length ? el("div", { class: "fb-mini" }, ...ads.slice(0, 8).map(a => el("a", { class: "fb-minirow", href: fbLib(a.id), target: "_blank", rel: "noopener noreferrer" },
+          el("b", {}, a.page_name || "?"), el("span", {}, `${nf(fbDays(a) ?? 0)} napja`), Number(a.collation_count) > 1 ? el("span", {}, `${a.collation_count} változat`) : el("span", {}, ""),
+          el("span", { class: "muted" }, a.domain || "")))) : null);
+    }
+    return el("div", { class: "d-sec" }, el("h3", {}, "Facebook hirdetések", el("span", {}, r && r.results_est != null ? `~${nf(r.results_est)}` : "")), body);
+  }
+  const BASE_FB = "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&media_type=all&search_type=keyword_unordered&q=";
+
   // relevant comments of the product's creator videos (hourly job, best sellers first)
   function commentsSection(p) {
     const id = p.product_id;
@@ -1157,7 +1298,8 @@
   }
 
   // ---------- runs ----------
-  const JOB = { shop: "Termékkeresés", shop_track: "Eladásmérés", videos: "Termékvideók", collect: "Videógyűjtés", track: "Videómérés" };
+  const JOB = { shop: "Termékkeresés", shop_track: "Eladásmérés", videos: "Termékvideók", collect: "Videógyűjtés", track: "Videómérés",
+    fbads: "Facebook hirdetések", comments_products: "Videókommentek", comments: "Csomag kommentek" };
   let openRun = null;
   function renderRuns() {
     if (!state.runs.length) { $("runs").replaceChildren(el("div", { class: "empty" }, "Még nincs futás.")); return; }
@@ -1171,6 +1313,8 @@
       else if (r.job === "shop_track") result = `${nf(s.product_pages)} / ${nf(s.selected)} termék mérve`;
       else if (r.job === "videos") result = `${nf(s.video_products)} termék, ${nf(s.videos)} videó`;
       else if (r.job === "collect") result = `${nf(s.seen)} videó átnézve, ${nf(s.ok)} új`;
+      else if (r.job === "fbads") result = `${nf((s.niche_searches || 0) + (s.product_searches || 0) + (s.page_searches || 0))} keresés, ${nf(s.ads_seen || 0)} hirdetés` + (s.blocked ? ", a Facebook bejelentkezést kért" : "");
+      else if (r.job === "comments_products" || r.job === "comments") result = `${nf(s.kits || 0)} termék kommentjei`;
       else result = `${nf(s.tracking)} követett, ${nf(s.dropped || 0)} kiesett`;
       const errs = (s.feed_errors || 0) + (s.failed || 0) + (s.category_errors || 0) + (s.product_page_errors || 0) + (s.video_errors || 0);
       const feeds = r.job === "shop" ? s.categories : s.feeds;
