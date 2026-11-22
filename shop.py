@@ -21,6 +21,8 @@ from collections import Counter
 
 import requests
 
+import psycopg
+
 import db
 import netstats
 import gallery
@@ -213,6 +215,8 @@ async def scan_categories(cfg, conn, proxies) -> set[str]:
             STATS["in_range"] += 1
             ns["in_range"] += 1
             kept.add(p["product_id"])
+            if ns["in_range"] % 100 == 0:
+                conn.commit()   # short transactions: the sales check updates the same rows at the same time
         for cat in g["cats"]:
             if cat in CATS:
                 CATS[cat]["in_range"] = sum(1 for p in found.values() if p.get("category_id") == cat.split("/")[-1] and ok(p))
@@ -256,15 +260,20 @@ async def read_pages(conn, proxies, todo: list[tuple[str, str]]) -> None:
         if info is None:
             STATS["product_pages_skipped"] += 1
             continue
-        if isinstance(info, Exception):
-            STATS["product_page_errors"] += 1
-            db.touch_shop_product(conn, pid)
-        else:
-            db.save_shop_product_page(conn, pid, info)
-            if info.get("sold") is not None:
-                db.add_product_snapshot(conn, pid, info["sold"], info.get("price_min"), info.get("price_max"), "page")
-            STATS["product_pages"] += 1
-        conn.commit()
+        try:
+            if isinstance(info, Exception):
+                STATS["product_page_errors"] += 1
+                db.touch_shop_product(conn, pid)
+            else:
+                db.save_shop_product_page(conn, pid, info)
+                if info.get("sold") is not None:
+                    db.add_product_snapshot(conn, pid, info["sold"], info.get("price_min"), info.get("price_max"), "page")
+                STATS["product_pages"] += 1
+            conn.commit()
+        except (psycopg.errors.LockNotAvailable, psycopg.errors.QueryCanceled):
+            # another job (the category scan) is writing this product right now: skip it, it comes back next round
+            conn.rollback()
+            STATS["product_pages_locked"] += 1
 
 
 async def main() -> None:

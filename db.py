@@ -12,7 +12,12 @@ from core import ParsedVideo
 
 def connect() -> psycopg.Connection:
     url = os.environ["DATABASE_URL"]
-    return psycopg.connect(url, autocommit=False, prepare_threshold=None)
+    conn = psycopg.connect(url, autocommit=False, prepare_threshold=None)
+    with conn.cursor() as cur:
+        # wait at most 20 s for a row another job holds, instead of hanging until the statement timeout
+        cur.execute("set lock_timeout = '20s'")
+    conn.commit()
+    return conn
 
 
 def known_ids(conn) -> set[str]:
