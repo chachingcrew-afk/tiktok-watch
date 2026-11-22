@@ -359,12 +359,15 @@ def products_for_videos(conn, min_sold: int, limit: int) -> list[tuple]:
     Covers only for the products that also get a full gallery (1000+ sold or starred)."""
     with conn.cursor() as cur:
         cur.execute(
-            "select product_id, seller_id, url, (starred or coalesce(last_sold, 0) >= 1000) from tiktok_watch.shop_products"
-            " where not hidden and retired_at is null and url is not null and (starred or (niche is not null and coalesce(last_sold, 0) >= %s))"
-            "   and last_seen > now() - interval '14 days'"
-            "   and (videos_checked_at is null or videos_checked_at < now() - interval '20 hours'"
-            "        or (video_count is null and videos_checked_at < now() - interval '1 hour'))"
-            " order by starred desc, (video_count is null and videos_checked_at is not null) desc, last_sold desc nulls last limit %s",
+            "select p.product_id, p.seller_id, p.url, (p.starred or coalesce(p.last_sold, 0) >= 1000) from tiktok_watch.shop_products p"
+            " left join tiktok_watch.comment_priority cp using (product_id)"
+            " where not p.hidden and p.retired_at is null and p.url is not null"
+            "   and (cp.product_id is not null or p.starred or (p.niche is not null and coalesce(p.last_sold, 0) >= %s))"
+            "   and (cp.product_id is not null or p.last_seen > now() - interval '14 days')"
+            "   and (p.videos_checked_at is null or p.videos_checked_at < now() - interval '20 hours'"
+            "        or (p.video_count is null and p.videos_checked_at < now() - interval '1 hour'))"
+            " order by (cp.product_id is not null) desc, p.starred desc, (p.video_count is null and p.videos_checked_at is not null) desc,"
+            " p.last_sold desc nulls last limit %s",
             (min_sold, limit),
         )
         return cur.fetchall()

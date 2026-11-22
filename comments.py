@@ -42,12 +42,15 @@ def products_due(conn) -> list[tuple[str, list]]:
         cur.execute("""select l.product_id,
                               (select jsonb_agg(jsonb_build_object('item_id', v.item_id, 'plays', v.play_count) order by v.play_count desc nulls last)
                                  from tiktok_watch.shop_product_videos v where v.product_id = l.product_id)
-                       from tiktok_watch.listed_ids() l
+                       from (select product_id, min(ord) ord, bool_or(prio) prio from (
+                               select product_id, ord, false prio from tiktok_watch.listed_ids()
+                               union all
+                               select product_id, 0, true from tiktok_watch.comment_priority) u group by product_id) l
                        left join tiktok_watch.product_comment_state s using (product_id)
                        where exists (select 1 from tiktok_watch.shop_product_videos v where v.product_id = l.product_id)
                          and (s.comments_at is null or s.comments_at < now() - make_interval(days => %s)
                               or (coalesce((s.stats->>'pending')::int, 0) > 0 and coalesce((s.stats->>'tries')::int, 0) < %s))
-                       order by (s.comments_at is not null), l.ord limit %s""", (PRODUCT_REFRESH_DAYS, MAX_TRIES, PRODUCTS_PER_RUN))
+                       order by (s.comments_at is not null), l.prio desc, l.ord limit %s""", (PRODUCT_REFRESH_DAYS, MAX_TRIES, PRODUCTS_PER_RUN))
         return cur.fetchall()
 
 
