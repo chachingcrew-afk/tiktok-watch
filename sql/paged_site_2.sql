@@ -67,3 +67,9 @@ begin
   $q$, v_seg, v_sort) into res using v_q, v_page;
   return res;
 end $$;
+
+-- 3) build_shop_list: the shop-name brand match compares against one stripped name (shop_core) instead of eight
+--    concatenated variants per brand and row. Full rebuild 87 s -> 40 s, same brands; refresh_shop_metrics ~58 s in total.
+--    Applied with pg_get_functiondef + replace (migration paged_site_faster_brand_match):
+--      shop_core := regexp_replace(<shop name lowercased, letters and digits only>, '(officialstore|official|store|usa|us|direct|shop)$', '')
+--      brand by shop := (select bn.b from _bn bn where s.shopn <> '' and (bn.nb = s.shopn or bn.nb = s.shop_core) limit 1)
