@@ -3,7 +3,7 @@
 The desktop product page loads that section from shop.tiktok.com/api/shop/pdp_desktop/page_data, a
 plain POST that needs no signature, login or proxy. We ask it only for the video_list component of
 one product and store each video's views, likes, title, creator and upload date. A small cover
-image is stored for the best videos of promising products (the dashboard cannot load TikTok images).
+image of the most viewed videos of every product goes to R2 (TikTok's own cover links expire), once per video.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ log = logging.getLogger("tiktok-watch")
 API = "https://shop.tiktok.com/api/shop/pdp_desktop/page_data"
 WORKERS = int(os.environ.get("VIDEOS_WORKERS", "8"))
 PER_RUN = int(os.environ.get("VIDEOS_PER_RUN", "1500"))
-COVERS_PER_PRODUCT = int(os.environ.get("VIDEOS_COVERS", "6"))
+COVERS_PER_PRODUCT = int(os.environ.get("VIDEOS_COVERS", "30"))  # the website shows up to 30 videos per product
 
 
 def request_body(product_id: str, seller_id: str | None) -> str:
@@ -137,17 +137,20 @@ def run(conn, min_sold: int, stats: Counter, limit: int = PER_RUN) -> None:
     todo = db.products_for_videos(conn, min_sold, limit)
     if not todo:
         return
+    have = db.cover_keys(conn, [r[0] for r in todo])
 
     def one(row):
-        pid, seller_id, url, want_covers = row
+        pid, seller_id, url, _ = row
         try:
             vids = fetch_videos(pid, seller_id, url)
         except Exception as e:  # noqa: BLE001
             return pid, e, None
-        if want_covers:
-            for v in sorted(vids, key=lambda x: -(x["play_count"] or 0))[:COVERS_PER_PRODUCT]:
+        for v in sorted(vids, key=lambda x: -(x["play_count"] or 0))[:COVERS_PER_PRODUCT]:
+            if (pid, v["item_id"]) not in have:
                 v["cover"] = small_cover(v["cover_url"])
-        return pid, vids, want_covers
+                if v["cover"]:
+                    stats["covers"] += 1
+        return pid, vids, True
 
     deadline = time.monotonic() + BUDGET_S
     chunk = WORKERS * 4

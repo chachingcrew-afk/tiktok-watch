@@ -378,6 +378,16 @@ def mark_videos_checked(conn, product_id: str) -> None:
         cur.execute("update tiktok_watch.shop_products set videos_checked_at = now() where product_id = %s", (product_id,))
 
 
+def cover_keys(conn, product_ids: list[str]) -> set[tuple[str, str]]:
+    """(product_id, item_id) of the videos whose cover is already stored, so they are not downloaded again."""
+    if not product_ids:
+        return set()
+    with conn.cursor() as cur:
+        cur.execute("select product_id, item_id from tiktok_watch.shop_product_videos"
+                    " where product_id = any(%s) and (cover_key is not null or cover is not null)", (list(product_ids),))
+        return {(r[0], r[1]) for r in cur.fetchall()}
+
+
 def save_product_videos(conn, product_id: str, videos: list[dict], keep_covers: bool) -> None:
     import base64
     import media_store
@@ -388,8 +398,7 @@ def save_product_videos(conn, product_id: str, videos: list[dict], keep_covers: 
             if cover and r2:
                 try:
                     key = media_store.put(f"cover/{product_id}/{v['item_id']}.jpg", base64.b64decode(cover), "image/jpeg")
-                    if not KEEP_GALLERY_DATA:
-                        cover = None
+                    cover = None  # the website reads covers from R2; the database keeps only the key
                 except Exception:
                     key = None
             cur.execute(
