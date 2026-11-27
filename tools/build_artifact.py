@@ -36,16 +36,16 @@ SHIM = r"""
     return JSON.parse(m ? m[1] : text.slice(text.indexOf("["), text.lastIndexOf("]") + 1));
   }
   const MSG = {
-    needs_reauth: "A Supabase kapcsolat lejárt. Csatlakoztasd újra a claude.ai Beállítások, Connectors menüben.",
-    server_not_connected: "Ehhez az oldalhoz a Supabase connector kell (claude.ai Beállítások, Connectors).",
-    selection_required: "Ehhez az oldalhoz a Supabase connector kell (claude.ai Beállítások, Connectors).",
-    not_in_manifest: "Az oldal nem kapott engedélyt a Supabase eléréséhez (az oldal Permissions menüje).",
-    consent_required: "Az oldal nem kapott engedélyt a Supabase eléréséhez (az oldal Permissions menüje).",
-    server_unavailable: "A Supabase most nem válaszol. Próbáld újra pár perc múlva.",
+    needs_reauth: "The Supabase connection expired. Reconnect it in claude.ai Settings, Connectors.",
+    server_not_connected: "This page needs the Supabase connector (claude.ai Settings, Connectors).",
+    selection_required: "This page needs the Supabase connector (claude.ai Settings, Connectors).",
+    not_in_manifest: "The page has no permission to use Supabase (see the page's Permissions menu).",
+    consent_required: "The page has no permission to use Supabase (see the page's Permissions menu).",
+    server_unavailable: "Supabase is not answering right now. Try again in a few minutes.",
   };
   async function rpc(fn, args) {
     const mcp = await getMcp();
-    if (!mcp) return { data: null, error: { message: "Ez a változat csak a claude.ai-ban megnyitva működik." } };
+    if (!mcp) return { data: null, error: { message: "This copy only works when opened in claude.ai." } };
     const a = Object.entries(args || {}).map(([k, v]) => k + " => " + lit(v)).join(", ");
     const call = "public." + fn + "(" + a + ")";
     const expr = SET_FUNCS.has(fn) ? "(select coalesce(json_agg(t), '[]'::json) from " + call + " t)" : "to_json(" + call + ")";
@@ -58,7 +58,7 @@ SHIM = r"""
       const r = rows && rows[0] ? rows[0].r : null;
       return { data: r == null ? null : JSON.parse(r), error: null };
     } catch (e) {
-      return { data: null, error: { code: e && e.code, message: (e && MSG[e.code]) || (e && e.message) || "ismeretlen hiba" } };
+      return { data: null, error: { code: e && e.code, message: (e && MSG[e.code]) || (e && e.message) || "unknown error" } };
     }
   }
   const session = { user: { email: "claude.ai (connector)" } };
@@ -68,7 +68,7 @@ SHIM = r"""
     async signOut() { return { error: null }; },
   };
   for (const k of ["signUp", "signInWithPassword", "signInWithOAuth", "resetPasswordForEmail", "updateUser"])
-    auth[k] = async () => ({ data: null, error: { message: "A belépés itt nem kell: a claude.ai Supabase connectorán keresztül fut." } });
+    auth[k] = async () => ({ data: null, error: { message: "No sign-in needed here: it runs through the claude.ai Supabase connector." } });
   window.supabase = { createClient: () => ({ auth, rpc }) };
   window.TR_CONFIG = { supabaseUrl: "", supabaseKey: "", mediaUrl: "https://pub-118a4cc7721840ce9f18b2d83daf59af.r2.dev" };
 })();
@@ -86,10 +86,10 @@ def main(out: str) -> None:
     body = re.sub(r'\s*<script src="app\.js"></script>', "", body)
     body = body.replace('href="termekradar-bovitmeny.zip"', 'href="https://termekradar-a69s.netlify.app/termekradar-bovitmeny.zip"')
     fonts = '<link rel="preconnect" href="https://fonts.googleapis.com">\n<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n' \
-            '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap">'
+            '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">'
     shim = SHIM.replace("%SETS%", repr(sorted(SET_FUNCS)).replace("'", '"')) \
                .replace("%CLAIMS%", '\'{"sub":"%s","role":"authenticated"}\'' % OWNER_ID)
-    page = f"<title>Termékradar</title>\n{fonts}\n<style>\n{css}\n#logout {{ display: none; }}\n</style>\n{body}\n{shim}\n<script>\n{js}\n</script>\n"
+    page = f"<title>Termékradar</title>\n{fonts}\n<style>\n{css}\n#logout, #logout2 {{ display: none; }}\n</style>\n{body}\n{shim}\n<script>\n{js}\n</script>\n"
     pathlib.Path(out).write_text(page)
     print(out, len(page))
 
